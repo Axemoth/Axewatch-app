@@ -12,12 +12,12 @@ data class IpoIssue(
     val lotSize: Int,
     val issueSizeCr: Double,
     val registrar: String,
-    val qibSub: Double,
-    val niiSub: Double,
-    val shniSub: Double, // Small HNI (₹2L - ₹10L)
-    val bhniSub: Double, // Big HNI (> ₹10L)
-    val riiSub: Double,  // Retail
-    val totalSub: Double,
+    val qibSub: Double = 0.0,
+    val niiSub: Double = 0.0,
+    val shniSub: Double = 0.0, // Small HNI (₹2L - ₹10L)
+    val bhniSub: Double = 0.0, // Big HNI (> ₹10L)
+    val riiSub: Double = 0.0,  // Retail
+    val totalSub: Double = 0.0,
     val gmpAmount: Double = 0.0,
     val gmpPercent: Double = 0.0,
     val estListingPrice: Double = 0.0

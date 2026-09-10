@@ -202,12 +202,26 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         _selectedStock.value = stock
         _selectedStockCandles.value = repository.getCandlesForStock(stock.symbol, _selectedTimeframe.value)
         _selectedStockOutlook.value = repository.getStockOutlook(stock.symbol)
+        viewModelScope.launch {
+            val freshCandles = repository.fetchFreshCandles(stock.symbol, _selectedTimeframe.value)
+            if (_selectedStock.value?.symbol == stock.symbol) {
+                _selectedStockCandles.value = freshCandles
+                val freshOutlook = repository.fetchFreshOutlook(stock.symbol, freshCandles)
+                _selectedStockOutlook.value = freshOutlook
+            }
+        }
     }
 
     fun setTimeframe(tf: String) {
         _selectedTimeframe.value = tf
         _selectedStock.value?.let { stock ->
             _selectedStockCandles.value = repository.getCandlesForStock(stock.symbol, tf)
+            viewModelScope.launch {
+                val freshCandles = repository.fetchFreshCandles(stock.symbol, tf)
+                if (_selectedStock.value?.symbol == stock.symbol) {
+                    _selectedStockCandles.value = freshCandles
+                }
+            }
         }
     }
 
@@ -227,12 +241,12 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
             repository.refreshMarket()
             // If a stock is currently opened, update its outlook as well
             _selectedStock.value?.let { st ->
-                val updated = repository.stocks.let { stList ->
-                    stocks.value.find { it.symbol == st.symbol } ?: st
-                }
+                val updated = stocks.value.find { it.symbol == st.symbol } ?: st
                 _selectedStock.value = updated
-                _selectedStockCandles.value = repository.getCandlesForStock(updated.symbol)
-                _selectedStockOutlook.value = repository.getStockOutlook(updated.symbol)
+                val freshCandles = repository.fetchFreshCandles(updated.symbol, _selectedTimeframe.value)
+                _selectedStockCandles.value = freshCandles
+                val freshOutlook = repository.fetchFreshOutlook(updated.symbol, freshCandles)
+                _selectedStockOutlook.value = freshOutlook
             }
             _isRefreshing.value = false
         }
