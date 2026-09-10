@@ -1,0 +1,56 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Candle 1: Lower support (rose accent) -->
+    <path
+        android:fillColor="#EF4444"
+        android:pathData="M32,54 L36,54 L36,66 L32,66 Z" />
+    <path
+        android:strokeColor="#EF4444"
+        android:strokeWidth="1.5"
+        android:pathData="M34,50 L34,70" />
+
+    <!-- Candle 2: Rising body (emerald green) -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M44,42 L48,42 L48,58 L44,58 Z" />
+    <path
+        android:strokeColor="#10B981"
+        android:strokeWidth="1.5"
+        android:pathData="M46,36 L46,62" />
+
+    <!-- Candle 3: High breakout (emerald green) -->
+    <path
+        android:fillColor="#10B981"
+        android:pathData="M56,32 L60,32 L60,48 L56,48 Z" />
+    <path
+        android:strokeColor="#10B981"
+        android:strokeWidth="1.5"
+        android:pathData="M58,26 L58,54" />
+
+    <!-- Stylized modern Axe blade angled upward across the chart (Cyan / Platinum) -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M42,76 L68,34 C74,32 80,36 78,44 L70,50 L76,62 C73,66 68,67 64,64 L50,80 Z" />
+
+    <!-- Axe blade edge highlight (bright gold/white) -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.8"
+        android:strokeLineCap="round"
+        android:pathData="M68,34 C75,32 81,37 78,44" />
+
+    <!-- Upward Trend Line / Spark Arrow -->
+    <path
+        android:strokeColor="#F59E0B"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M28,68 L42,54 L52,60 L78,30" />
+    <path
+        android:fillColor="#F59E0B"
+        android:pathData="M78,30 L72,30 L78,36 Z" />
+</vector>
+

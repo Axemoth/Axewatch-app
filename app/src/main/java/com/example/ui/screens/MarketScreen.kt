@@ -1,0 +1,603 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.example.data.model.FiiDiiFlow
+import com.example.data.model.MarketIndex
+import com.example.data.model.SectorHeatmapItem
+import com.example.data.model.StockQuote
+import com.example.ui.theme.AxeAmber
+import com.example.ui.theme.AxeBorder
+import com.example.ui.theme.AxeDarkBg
+import com.example.ui.theme.AxeDarkSurface
+import com.example.ui.theme.AxeDarkSurfaceElevated
+import com.example.ui.theme.AxeEmeraldGreen
+import com.example.ui.theme.AxeGreenSubtle
+import com.example.ui.theme.AxePrimaryCyan
+import com.example.ui.theme.AxeRedSubtle
+import com.example.ui.theme.AxeRoseRed
+import com.example.ui.theme.AxeTextMuted
+import com.example.ui.theme.AxeTextPrimary
+import com.example.ui.theme.AxeTextSecondary
+
+@Composable
+fun MarketScreen(
+    indices: List<MarketIndex>,
+    stocks: List<StockQuote>,
+    sectors: List<SectorHeatmapItem>,
+    fiiDii: List<FiiDiiFlow>,
+    watchlistedSymbols: Set<String> = emptySet(),
+    onToggleWatchlist: (StockQuote) -> Unit = {},
+    onStockClick: (StockQuote) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var stockFilterTab by remember { mutableIntStateOf(0) } // 0: All, 1: Gainers, 2: Losers, 3: Watchlist
+    var searchQuery by remember { mutableStateOf("") }
+
+    val filteredStocks = remember(stocks, stockFilterTab, searchQuery, watchlistedSymbols) {
+        val byTab = when (stockFilterTab) {
+            1 -> stocks.filter { it.isPositive }.sortedByDescending { it.percentChange }
+            2 -> stocks.filter { !it.isPositive }.sortedBy { it.percentChange }
+            3 -> stocks.filter { watchlistedSymbols.contains(it.symbol) }
+            else -> stocks
+        }
+
+        if (searchQuery.isBlank()) {
+            byTab
+        } else {
+            val q = searchQuery.trim().lowercase()
+            byTab.filter {
+                it.symbol.lowercase().contains(q) ||
+                it.name.lowercase().contains(q) ||
+                it.sector.lowercase().contains(q)
+            }
+        }
+    }
+
+    LazyColumn(
+        modifier = modifier
+            .fillMaxSize()
+            .background(AxeDarkBg),
+        contentPadding = PaddingValues(bottom = 80.dp)
+    ) {
+        // Section: Market Indices
+        item {
+            Column(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) {
+                Text(
+                    text = "KEY INDICES",
+                    color = AxeTextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(indices) { index ->
+                        IndexCard(index = index)
+                    }
+                }
+            }
+        }
+
+        // Section: Sector Heatmap
+        item {
+            Column(modifier = Modifier.padding(top = 16.dp)) {
+                Text(
+                    text = "SECTOR HEATMAP",
+                    color = AxeTextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+                )
+
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(sectors) { sector ->
+                        val isBull = sector.percentChange >= 0
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (isBull) AxeGreenSubtle else AxeRedSubtle)
+                                .border(1.dp, if (isBull) AxeEmeraldGreen.copy(alpha = 0.3f) else AxeRoseRed.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                                .padding(horizontal = 12.dp, vertical = 8.dp)
+                        ) {
+                            Column {
+                                Text(
+                                    text = sector.sector,
+                                    color = AxeTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "${if (isBull) "+" else ""}${sector.percentChange}%",
+                                        color = if (isBull) AxeEmeraldGreen else AxeRoseRed,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Top: ${sector.topStock}",
+                                        color = AxeTextMuted,
+                                        fontSize = 9.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section: FII & DII Cash Flow
+        item {
+            Column(modifier = Modifier.padding(top = 16.dp, start = 16.dp, end = 16.dp)) {
+                Text(
+                    text = "INSTITUTIONAL ACTIVITY (FII / DII)",
+                    color = AxeTextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+
+                if (fiiDii.isNotEmpty()) {
+                    val latest = fiiDii.first()
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(AxeDarkSurface)
+                            .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+                            .padding(14.dp)
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Cash Market Flow", color = AxeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                                Text(latest.date, color = AxePrimaryCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            }
+
+                            Spacer(modifier = Modifier.height(10.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // FII
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("FII Net Flow", color = AxeTextMuted, fontSize = 11.sp)
+                                    val isFiiPos = latest.fiiNet >= 0
+                                    Text(
+                                        text = if (isFiiPos) "+₹${"%,.1f".format(latest.fiiNet)} Cr" else "-₹${"%,.1f".format(-latest.fiiNet)} Cr",
+                                        color = if (isFiiPos) AxeEmeraldGreen else AxeRoseRed,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Text("Buy: ${"%,.0f".format(latest.fiiGrossBuy)} · Sell: ${"%,.0f".format(latest.fiiGrossSell)}", color = AxeTextMuted, fontSize = 10.sp)
+                                }
+
+                                Box(
+                                    modifier = Modifier
+                                        .width(1.dp)
+                                        .height(40.dp)
+                                        .background(AxeBorder)
+                                )
+
+                                // DII
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .padding(start = 12.dp)
+                                ) {
+                                    Text("DII Net Flow", color = AxeTextMuted, fontSize = 11.sp)
+                                    val isDiiPos = latest.diiNet >= 0
+                                    Text(
+                                        text = if (isDiiPos) "+₹${"%,.1f".format(latest.diiNet)} Cr" else "-₹${"%,.1f".format(-latest.diiNet)} Cr",
+                                        color = if (isDiiPos) AxeEmeraldGreen else AxeRoseRed,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp
+                                    )
+                                    Text("Buy: ${"%,.0f".format(latest.diiGrossBuy)} · Sell: ${"%,.0f".format(latest.diiGrossSell)}", color = AxeTextMuted, fontSize = 10.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Section: Market Pulse / News Ticker
+        item {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(AxeDarkSurfaceElevated)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(AxeEmeraldGreen)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "LIVE PULSE: NIFTY holding 24,950 support · FII net positive in cash market · Auto & Energy leading sectoral rally",
+                        color = AxeTextSecondary,
+                        fontSize = 10.sp,
+                        maxLines = 1
+                    )
+                }
+            }
+        }
+
+        // Section: Stocks & Movers Header + Tabs + Search
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                // Search Input Box
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxeDarkSurface)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = AxeTextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            textStyle = TextStyle(
+                                color = AxeTextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Normal
+                            ),
+                            cursorBrush = SolidColor(AxePrimaryCyan),
+                            modifier = Modifier.weight(1f),
+                            decorationBox = { innerTextField ->
+                                if (searchQuery.isEmpty()) {
+                                    Text("Search stocks by symbol, company, or sector...", color = AxeTextMuted, fontSize = 13.sp)
+                                }
+                                innerTextField()
+                            }
+                        )
+                        if (searchQuery.isNotEmpty()) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = AxeTextMuted,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clickable { searchQuery = "" }
+                                    .padding(4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Mobile-friendly header: Title Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "MARKET MOVERS",
+                        color = AxeTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "${filteredStocks.size} stocks",
+                        color = AxePrimaryCyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Dedicated Segmented Filter Bar optimized for phones
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxeDarkSurfaceElevated)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                        .padding(3.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    val tabs = listOf("All", "Gainers", "Losers", "Watchlist")
+                    tabs.forEachIndexed { idx, label ->
+                        val selected = stockFilterTab == idx
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(38.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (selected) AxePrimaryCyan.copy(alpha = 0.18f) else Color.Transparent)
+                                .clickable { stockFilterTab = idx },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (selected) AxePrimaryCyan else AxeTextSecondary,
+                                fontSize = 12.sp,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Empty state for filters / search
+        if (filteredStocks.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (stockFilterTab == 3) "Your watchlist is empty. Tap the star icon on any stock to add it." else "No stocks match your query.",
+                        color = AxeTextMuted,
+                        fontSize = 13.sp
+                    )
+                }
+            }
+        }
+
+        // Stock Rows
+        items(filteredStocks, key = { it.symbol }) { stock ->
+            StockListItem(
+                stock = stock,
+                isWatchlisted = watchlistedSymbols.contains(stock.symbol),
+                onToggleWatchlist = { onToggleWatchlist(stock) },
+                onClick = { onStockClick(stock) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun IndexCard(index: MarketIndex) {
+    val isBull = index.isPositive
+    val accentColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
+
+    Box(
+        modifier = Modifier
+            .width(170.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AxeDarkSurface)
+            .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = index.name,
+                    color = AxeTextPrimary,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Text(
+                text = "₹${"%,.2f".format(index.lastPrice)}",
+                color = AxeTextPrimary,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.ExtraBold
+            )
+
+            Spacer(modifier = Modifier.height(2.dp))
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (isBull) "▲ +${index.percentChange}%" else "▼ ${index.percentChange}%",
+                    color = accentColor,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = "(${if (isBull) "+" else ""}${"%,.1f".format(index.change)})",
+                    color = AxeTextMuted,
+                    fontSize = 10.sp
+                )
+            }
+
+            if (index.advances > 0 || index.declines > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Adv: ${index.advances}", color = AxeEmeraldGreen, fontSize = 9.sp)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Dec: ${index.declines}", color = AxeRoseRed, fontSize = 9.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StockListItem(
+    stock: StockQuote,
+    isWatchlisted: Boolean,
+    onToggleWatchlist: () -> Unit,
+    onClick: () -> Unit
+) {
+    val isBull = stock.isPositive
+    val trendColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(AxeDarkSurface)
+            .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+            .clickable(onClick = onClick)
+            .testTag("stock_item_${stock.symbol}")
+            .padding(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Left: Symbol, Name, Sector
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stock.symbol,
+                        color = AxeTextPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AxeDarkSurfaceElevated)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = stock.sector,
+                            color = AxeTextMuted,
+                            fontSize = 9.sp
+                        )
+                    }
+                }
+                Text(
+                    text = stock.name,
+                    color = AxeTextSecondary,
+                    fontSize = 11.sp,
+                    maxLines = 1
+                )
+                Text(
+                    text = "Vol: ${stock.volume} · H: ₹${"%,.0f".format(stock.dayHigh)} L: ₹${"%,.0f".format(stock.dayLow)}",
+                    color = AxeTextMuted,
+                    fontSize = 10.sp
+                )
+            }
+
+            // Right: Price and Change Chip and 1-tap Watchlist star
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = "₹${"%,.2f".format(stock.lastPrice)}",
+                        color = AxeTextPrimary,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isBull) AxeGreenSubtle else AxeRedSubtle)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "${if (isBull) "+" else ""}${stock.percentChange}%",
+                            color = trendColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onToggleWatchlist,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .padding(start = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = if (isWatchlisted) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                        contentDescription = if (isWatchlisted) "Remove from Watchlist" else "Add to Watchlist",
+                        tint = if (isWatchlisted) AxeAmber else AxeTextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
