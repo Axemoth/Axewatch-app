@@ -355,44 +355,56 @@ private fun IpoIssueCard(
             }
 
             // Expected GMP & Listing Gain Calculator trigger
-            if (ipo.gmpAmount > 0) {
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    if (ipo.gmpAmount > 0) {
                         Text(
-                            text = "Current GMP: +₹${ipo.gmpAmount} (+${ipo.gmpPercent}%)",
+                            text = "Current GMP: +₹${ipo.gmpAmount.toInt()} (+${ipo.gmpPercent}%)",
                             color = AxeEmeraldGreen,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Est. Listing: ₹${ipo.estListingPrice}",
+                            text = "Est. Listing: ₹${ipo.estListingPrice.toInt()}",
                             color = AxePrimaryCyan,
                             fontSize = 11.sp
                         )
-                    }
-
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(AxePrimaryCyan.copy(alpha = 0.15f))
-                            .border(1.dp, AxePrimaryCyan.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                            .clickable(onClick = onCalculateGain)
-                            .heightIn(min = 44.dp)
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
+                    } else {
                         Text(
-                            text = "Calculate Gain ➔",
-                            color = AxePrimaryCyan,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            text = "Current GMP: ₹0 (TBA)",
+                            color = AxeTextMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Est. Listing: ${if (ipo.issuePrice > 0) "₹${ipo.issuePrice.toInt()}" else "TBA"}",
+                            color = AxeTextSecondary,
+                            fontSize = 11.sp
                         )
                     }
+                }
+
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(AxePrimaryCyan.copy(alpha = 0.15f))
+                        .border(1.dp, AxePrimaryCyan.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .clickable(onClick = onCalculateGain)
+                        .heightIn(min = 44.dp)
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Calculate Gain ➔",
+                        color = AxePrimaryCyan,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -448,8 +460,13 @@ private fun GmpBoardCard(
                     }
                 }
                 Spacer(modifier = Modifier.height(2.dp))
+                val priceDesc = if (gmp.issuePrice > 0) {
+                    "Issue: ₹${gmp.issuePrice.toInt()} → Est: ₹${gmp.estListingPrice.toInt()}"
+                } else {
+                    "Issue: TBA → Est: TBA"
+                }
                 Text(
-                    text = "Issue Price: ₹${"%,.0f".format(gmp.issuePrice)} → Est: ₹${"%,.0f".format(gmp.estListingPrice)}",
+                    text = priceDesc,
                     color = AxeTextMuted,
                     fontSize = 11.sp
                 )
@@ -461,8 +478,15 @@ private fun GmpBoardCard(
             }
 
             Column(horizontalAlignment = Alignment.End) {
+                val gmpText = if (gmp.gmpAmount > 0) {
+                    "+₹${gmp.gmpAmount.toInt()}"
+                } else if (gmp.gmpAmount < 0) {
+                    "-₹${kotlin.math.abs(gmp.gmpAmount).toInt()}"
+                } else {
+                    "₹0"
+                }
                 Text(
-                    text = "+₹${"%,.0f".format(gmp.gmpAmount)}",
+                    text = gmpText,
                     color = trendColor,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold
@@ -473,8 +497,15 @@ private fun GmpBoardCard(
                         .background(if (isPositive) AxeGreenSubtle else AxeDarkSurfaceElevated)
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
+                    val pctText = if (gmp.gmpPercent > 0) {
+                        "+${gmp.gmpPercent}%"
+                    } else if (gmp.gmpPercent < 0) {
+                        "${gmp.gmpPercent}%"
+                    } else {
+                        "0.0%"
+                    }
                     Text(
-                        text = "+${"%,.1f".format(gmp.gmpPercent)}%",
+                        text = pctText,
                         color = trendColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold

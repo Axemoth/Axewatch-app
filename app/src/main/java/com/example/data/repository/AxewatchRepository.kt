@@ -31,6 +31,8 @@ import com.example.data.remote.NewsSentimentService
 import com.example.data.remote.YahooFinanceService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -133,112 +135,206 @@ class AxewatchRepository(private val db: AppDatabase) {
 
         val initialIpos = listOf(
             IpoIssue(
-                symbol = "ATHER",
-                companyName = "Ather Energy Ltd",
-                category = "Mainboard",
-                status = "Active",
-                issueOpenDate = "Sep 12, 2026",
-                issueCloseDate = "Sep 16, 2026",
-                priceBand = "₹320 - ₹340",
-                issuePrice = 340.0,
-                lotSize = 44,
-                issueSizeCr = 3100.0,
-                registrar = "MUFG Intime",
-                qibSub = 14.8,
-                niiSub = 8.4,
-                shniSub = 6.9,
-                bhniSub = 9.2,
-                riiSub = 4.2,
-                totalSub = 9.8,
-                gmpAmount = 68.0,
-                gmpPercent = 20.0,
-                estListingPrice = 408.0
-            ),
-            IpoIssue(
-                symbol = "SWIGGY",
-                companyName = "Swiggy Ltd",
-                category = "Mainboard",
-                status = "Closed",
-                issueOpenDate = "Sep 06, 2026",
-                issueCloseDate = "Sep 10, 2026",
-                priceBand = "₹371 - ₹390",
-                issuePrice = 390.0,
-                lotSize = 38,
-                issueSizeCr = 11327.0,
-                registrar = "MUFG Intime",
-                qibSub = 6.02,
-                niiSub = 1.24,
-                shniSub = 1.05,
-                bhniSub = 1.34,
-                riiSub = 1.14,
-                totalSub = 3.59,
-                gmpAmount = 25.0,
-                gmpPercent = 6.4,
-                estListingPrice = 415.0
-            ),
-            IpoIssue(
-                symbol = "NTPCGREEN",
-                companyName = "NTPC Green Energy Ltd",
+                symbol = "NSE",
+                companyName = "NSE (National Stock Exchange)",
                 category = "Mainboard",
                 status = "Forthcoming",
-                issueOpenDate = "Sep 22, 2026",
-                issueCloseDate = "Sep 25, 2026",
-                priceBand = "₹102 - ₹108",
-                issuePrice = 108.0,
-                lotSize = 138,
-                issueSizeCr = 10000.0,
-                registrar = "KFintech",
+                issueOpenDate = "17 Sept",
+                issueCloseDate = "21 Sept",
+                priceBand = "₹1,700 - ₹1,785",
+                issuePrice = 1785.0,
+                lotSize = 8,
+                issueSizeCr = 10500.0,
+                registrar = "MUFG Intime (Link Intime)",
                 qibSub = 0.0,
                 niiSub = 0.0,
                 shniSub = 0.0,
                 bhniSub = 0.0,
                 riiSub = 0.0,
                 totalSub = 0.0,
-                gmpAmount = 14.0,
-                gmpPercent = 13.0,
-                estListingPrice = 122.0
+                gmpAmount = 200.0,
+                gmpPercent = 11.2,
+                estListingPrice = 1985.0
             ),
             IpoIssue(
-                symbol = "SOLARTECH",
-                companyName = "SolarTech Energy SME",
+                symbol = "MANIKAPLA",
+                companyName = "Manika Plastech Ltd",
+                category = "Mainboard",
+                status = "Active",
+                issueOpenDate = "11 Sept",
+                issueCloseDate = "16 Sept",
+                priceBand = "₹41 - ₹43",
+                issuePrice = 43.0,
+                lotSize = 345,
+                issueSizeCr = 185.0,
+                registrar = "MUFG Intime (Link Intime)",
+                qibSub = 0.36,
+                niiSub = 1.26,
+                shniSub = 1.05,
+                bhniSub = 1.42,
+                riiSub = 2.24,
+                totalSub = 1.49,
+                gmpAmount = 13.0,
+                gmpPercent = 30.2,
+                estListingPrice = 56.0
+            ),
+            IpoIssue(
+                symbol = "VEEGALAND",
+                companyName = "Veegaland Developers",
+                category = "Mainboard",
+                status = "Active",
+                issueOpenDate = "10 Sept",
+                issueCloseDate = "15 Sept",
+                priceBand = "₹133 - ₹140",
+                issuePrice = 140.0,
+                lotSize = 105,
+                issueSizeCr = 320.0,
+                registrar = "KFin Technologies Ltd",
+                qibSub = 0.49,
+                niiSub = 1.01,
+                shniSub = 0.88,
+                bhniSub = 1.15,
+                riiSub = 1.78,
+                totalSub = 1.25,
+                gmpAmount = 24.0,
+                gmpPercent = 17.1,
+                estListingPrice = 164.0
+            ),
+            IpoIssue(
+                symbol = "INJECTOPOL",
+                companyName = "Injecto Polymers Ltd",
                 category = "SME",
                 status = "Active",
-                issueOpenDate = "Sep 10, 2026",
-                issueCloseDate = "Sep 14, 2026",
-                priceBand = "₹85 - ₹90",
-                issuePrice = 90.0,
-                lotSize = 1600,
-                issueSizeCr = 42.5,
-                registrar = "Bigshare",
-                qibSub = 42.5,
-                niiSub = 68.2,
-                shniSub = 54.0,
-                bhniSub = 75.0,
-                riiSub = 34.8,
-                totalSub = 48.6,
-                gmpAmount = 45.0,
-                gmpPercent = 50.0,
-                estListingPrice = 135.0
+                issueOpenDate = "11 Sept",
+                issueCloseDate = "16 Sept",
+                priceBand = "₹95 - ₹100",
+                issuePrice = 100.0,
+                lotSize = 1200,
+                issueSizeCr = 38.0,
+                registrar = "Bigshare Services Pvt Ltd",
+                qibSub = 1.02,
+                niiSub = 0.08,
+                shniSub = 0.06,
+                bhniSub = 0.10,
+                riiSub = 0.26,
+                totalSub = 0.29,
+                gmpAmount = 25.0,
+                gmpPercent = 25.0,
+                estListingPrice = 125.0
+            ),
+            IpoIssue(
+                symbol = "HEROMOTOR",
+                companyName = "Hero Motors Ltd",
+                category = "Mainboard",
+                status = "Forthcoming",
+                issueOpenDate = "16 Sept",
+                issueCloseDate = "18 Sept",
+                priceBand = "₹80 - ₹84",
+                issuePrice = 84.0,
+                lotSize = 175,
+                issueSizeCr = 900.0,
+                registrar = "KFin Technologies Ltd",
+                qibSub = 0.0,
+                niiSub = 0.0,
+                shniSub = 0.0,
+                bhniSub = 0.0,
+                riiSub = 0.0,
+                totalSub = 0.0,
+                gmpAmount = 8.0,
+                gmpPercent = 9.5,
+                estListingPrice = 92.0
+            ),
+            IpoIssue(
+                symbol = "SSRETAIL",
+                companyName = "SS Retail Ltd",
+                category = "Mainboard",
+                status = "Forthcoming",
+                issueOpenDate = "16 Sept",
+                issueCloseDate = "18 Sept",
+                priceBand = "₹405 - ₹424",
+                issuePrice = 424.0,
+                lotSize = 35,
+                issueSizeCr = 650.0,
+                registrar = "MUFG Intime (Link Intime)",
+                qibSub = 0.0,
+                niiSub = 0.0,
+                shniSub = 0.0,
+                bhniSub = 0.0,
+                riiSub = 0.0,
+                totalSub = 0.0,
+                gmpAmount = 30.0,
+                gmpPercent = 7.1,
+                estListingPrice = 454.0
+            ),
+            IpoIssue(
+                symbol = "JINDALSUP",
+                companyName = "Jindal Supreme Ltd",
+                category = "Mainboard",
+                status = "Forthcoming",
+                issueOpenDate = "16 Sept",
+                issueCloseDate = "18 Sept",
+                priceBand = "₹88 - ₹93",
+                issuePrice = 93.0,
+                lotSize = 160,
+                issueSizeCr = 420.0,
+                registrar = "Bigshare Services Pvt Ltd",
+                qibSub = 0.0,
+                niiSub = 0.0,
+                shniSub = 0.0,
+                bhniSub = 0.0,
+                riiSub = 0.0,
+                totalSub = 0.0,
+                gmpAmount = 13.0,
+                gmpPercent = 14.0,
+                estListingPrice = 106.0
+            ),
+            IpoIssue(
+                symbol = "AXIOMGAS",
+                companyName = "Axiom Gas Engineering",
+                category = "SME",
+                status = "Forthcoming",
+                issueOpenDate = "18 Sept",
+                issueCloseDate = "22 Sept",
+                priceBand = "₹50 - ₹53",
+                issuePrice = 53.0,
+                lotSize = 2000,
+                issueSizeCr = 49.8,
+                registrar = "Bigshare Services Pvt Ltd",
+                qibSub = 0.0,
+                niiSub = 0.0,
+                shniSub = 0.0,
+                bhniSub = 0.0,
+                riiSub = 0.0,
+                totalSub = 0.0,
+                gmpAmount = 12.0,
+                gmpPercent = 22.6,
+                estListingPrice = 65.0
             )
         )
         _ipos.value = initialIpos
 
         val initialGmps = listOf(
-            GmpItem("Ather Energy Ltd", "ATHER", 340.0, 68.0, 20.0, 408.0, "Open", 4, "Today, 09:30 AM"),
-            GmpItem("SolarTech Energy SME", "SOLARTECH", 90.0, 45.0, 50.0, 135.0, "Open", 5, "Today, 09:15 AM"),
-            GmpItem("NTPC Green Energy Ltd", "NTPCGREEN", 108.0, 14.0, 13.0, 122.0, "Upcoming", 3, "Yesterday"),
-            GmpItem("Swiggy Ltd", "SWIGGY", 390.0, 25.0, 6.4, 415.0, "Closed", 3, "Sep 10, 2026"),
-            GmpItem("Waaree Energies Ltd", "WAAREE", 1503.0, 1280.0, 85.2, 2783.0, "Listed", 5, "Sep 02, 2026"),
-            GmpItem("Hyundai Motor India", "HYUNDAI", 1960.0, 40.0, 2.0, 2000.0, "Listed", 2, "Aug 28, 2026")
+            GmpItem("NSE (National Stock Exchange)", "NSE", 1785.0, 200.0, 11.2, 1985.0, "Upcoming", 3, "Today, Live"),
+            GmpItem("Manika Plastech Ltd", "MANIKAPLA", 43.0, 13.0, 30.2, 56.0, "Open", 4, "Today, Live"),
+            GmpItem("Injecto Polymers Ltd", "INJECTOPOL", 100.0, 25.0, 25.0, 125.0, "Open", 4, "Today, Live"),
+            GmpItem("Veegaland Developers", "VEEGALAND", 140.0, 24.0, 17.1, 164.0, "Open", 3, "Today, Live"),
+            GmpItem("Axiom Gas Engineering", "AXIOMGAS", 53.0, 12.0, 22.6, 65.0, "Upcoming", 3, "Today, Live"),
+            GmpItem("Hero Motors Ltd", "HEROMOTOR", 84.0, 8.0, 9.5, 92.0, "Upcoming", 2, "Today, Live"),
+            GmpItem("Jindal Supreme Ltd", "JINDALSUP", 93.0, 13.0, 14.0, 106.0, "Upcoming", 3, "Today, Live"),
+            GmpItem("SS Retail Ltd", "SSRETAIL", 424.0, 30.0, 7.1, 454.0, "Upcoming", 2, "Today, Live")
         )
         _gmpItems.value = initialGmps
 
         val initialPastIpos = listOf(
-            PastIpoItem("WAAREE", "Waaree Energies Ltd", 1503.0, 2550.0, 2890.0, 69.7, 76.3, "Oct 28, 2024"),
-            PastIpoItem("HYUNDAI", "Hyundai Motor India", 1960.0, 1934.0, 1850.0, -1.3, 2.37, "Oct 22, 2024"),
-            PastIpoItem("TATATECH", "Tata Technologies Ltd", 500.0, 1200.0, 980.0, 140.0, 69.4, "Nov 30, 2023"),
-            PastIpoItem("PREMIER", "Premier Energies Ltd", 450.0, 991.0, 1140.0, 120.2, 74.3, "Sep 03, 2024"),
-            PastIpoItem("BAJAJHFL", "Bajaj Housing Finance", 70.0, 150.0, 132.0, 114.3, 67.4, "Sep 16, 2024")
+            PastIpoItem("AUGMONT", "Augmont Enterprises Ltd", 788.0, 961.0, 995.0, 21.9, 44.5, "Sep 2026"),
+            PastIpoItem("TEMPSENS", "Tempsens Instruments Ltd", 300.0, 634.0, 650.0, 111.3, 89.2, "Sep 2026"),
+            PastIpoItem("GAJA", "Gaja Alternative Ltd", 160.0, 185.0, 192.0, 15.6, 18.4, "Sep 2026"),
+            PastIpoItem("SHANKESH", "Shankesh Jewellers Ltd", 93.0, 103.3, 108.0, 11.1, 12.5, "Sep 2026"),
+            PastIpoItem("SUNSHINE", "Sunshine Pictures Ltd", 360.0, 395.9, 410.0, 10.0, 9.8, "Sep 2026"),
+            PastIpoItem("LALITHAA", "Lalithaa Jewellery Mart", 201.0, 265.0, 274.0, 31.8, 38.6, "Aug 2026"),
+            PastIpoItem("WAAREE", "Waaree Energies Ltd", 1503.0, 2550.0, 2890.0, 69.7, 76.3, "Listed"),
+            PastIpoItem("PREMIER", "Premier Energies Ltd", 450.0, 991.0, 1140.0, 120.2, 74.3, "Listed"),
+            PastIpoItem("BAJAJHFL", "Bajaj Housing Finance", 70.0, 150.0, 132.0, 114.3, 67.4, "Listed")
         )
         _pastIpos.value = initialPastIpos
 
@@ -457,7 +553,7 @@ class AxewatchRepository(private val db: AppDatabase) {
     suspend fun refreshMarket() = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
 
-        // 1. Fetch real stock quotes from Yahoo Finance
+        // 1. Fetch real stock quotes from Yahoo Finance concurrently
         val currentStocks = _stocks.value.toMutableList()
         var yahooSuccessCount = 0
 
@@ -476,11 +572,20 @@ class AxewatchRepository(private val db: AppDatabase) {
             Triple("WIPRO", "Wipro Ltd", "IT")
         )
 
-        for ((sym, name, sec) in tickersToFetch) {
-            val quote = yahooService.fetchStockQuote(sym, name, sec)
+        val fetchedQuotes = tickersToFetch.map { (sym, name, sec) ->
+            async {
+                try {
+                    yahooService.fetchStockQuote(sym, name, sec)
+                } catch (e: Exception) {
+                    null
+                }
+            }
+        }.awaitAll()
+
+        for (quote in fetchedQuotes) {
             if (quote != null) {
                 yahooSuccessCount++
-                val idx = currentStocks.indexOfFirst { it.symbol == sym }
+                val idx = currentStocks.indexOfFirst { it.symbol == quote.symbol }
                 if (idx >= 0) {
                     currentStocks[idx] = quote
                 } else {
@@ -492,8 +597,7 @@ class AxewatchRepository(private val db: AppDatabase) {
             _stocks.value = currentStocks
         }
 
-        // 2. Fetch real indices from Yahoo Finance
-        val indexList = mutableListOf<MarketIndex>()
+        // 2. Fetch real indices from Yahoo Finance concurrently
         val indicesToFetch = listOf(
             Triple("^NSEI", "NIFTY 50", "NIFTY 50"),
             Triple("^BSESN", "SENSEX", "BSE SENSEX"),
@@ -504,15 +608,36 @@ class AxewatchRepository(private val db: AppDatabase) {
             Triple("^INDIAVIX", "INDIAVIX", "INDIA VIX")
         )
 
-        for ((ticker, sym, name) in indicesToFetch) {
-            val idxQuote = yahooService.fetchMarketIndex(ticker, sym, name)
-            if (idxQuote != null) {
-                indexList.add(idxQuote)
+        val fetchedIndices = indicesToFetch.map { (ticker, sym, name) ->
+            async {
+                try {
+                    yahooService.fetchMarketIndex(ticker, sym, name)
+                } catch (e: Exception) {
+                    null
+                }
             }
+        }.awaitAll().filterNotNull()
+
+        if (fetchedIndices.isNotEmpty()) {
+            _indices.value = fetchedIndices
         }
-        if (indexList.isNotEmpty()) {
-            _indices.value = indexList
-        }
+
+        // Dynamic Sector Heatmap update based on latest live stocks
+        val itStocks = currentStocks.filter { it.sector == "IT" }
+        val bankStocks = currentStocks.filter { it.sector == "Banking" }
+        val autoStocks = currentStocks.filter { it.sector == "Automobile" }
+        val energyStocks = currentStocks.filter { it.sector == "Energy" }
+        val fmcgStocks = currentStocks.filter { it.sector == "FMCG" }
+
+        _sectorHeatmap.value = listOf(
+            SectorHeatmapItem("NIFTY IT", (itStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 1.06).let { (it * 100).roundToInt() / 100.0 }, itStocks.maxByOrNull { it.percentChange }?.symbol ?: "TCS"),
+            SectorHeatmapItem("NIFTY Bank", (bankStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: -0.19).let { (it * 100).roundToInt() / 100.0 }, bankStocks.maxByOrNull { it.percentChange }?.symbol ?: "HDFCBANK"),
+            SectorHeatmapItem("NIFTY Auto", (autoStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 0.85).let { (it * 100).roundToInt() / 100.0 }, autoStocks.maxByOrNull { it.percentChange }?.symbol ?: "TATAMOTORS"),
+            SectorHeatmapItem("NIFTY Energy", (energyStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 0.72).let { (it * 100).roundToInt() / 100.0 }, energyStocks.maxByOrNull { it.percentChange }?.symbol ?: "RELIANCE"),
+            SectorHeatmapItem("NIFTY FMCG", (fmcgStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: -0.49).let { (it * 100).roundToInt() / 100.0 }, fmcgStocks.maxByOrNull { it.percentChange }?.symbol ?: "ITC"),
+            SectorHeatmapItem("NIFTY Metal", 1.25, "JNDALSTEL"),
+            SectorHeatmapItem("NIFTY Realty", 1.48, "DLF")
+        )
 
         // 3. Fetch real IPOs & Live GMP from Investorgain / IPOWatch
         try {
