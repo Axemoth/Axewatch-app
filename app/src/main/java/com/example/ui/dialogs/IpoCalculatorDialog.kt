@@ -276,6 +276,82 @@ fun IpoCalculatorDialog(
                 }
             }
 
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Allotment Probability & Subscription Insight Card
+            val retailSub = ipo.riiSub
+            val retailProb = if (retailSub > 0) (100.0 / retailSub).coerceIn(0.1, 100.0) else 100.0
+            val probColor = when {
+                retailProb >= 50.0 -> AxeEmeraldGreen
+                retailProb >= 15.0 -> AxeAmber
+                else -> AxeRoseRed
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("ALLOTMENT CHANCES (RETAIL RII)", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text(
+                            text = if (retailSub <= 1.0) "Guaranteed 100%" else "~1 in ${"%,.1f".format(retailSub)} bidders",
+                            color = probColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    // Probability Gauge Bar
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(AxeDarkSurfaceElevated)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth((retailProb / 100.0).toFloat().coerceIn(0.02f, 1f))
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(probColor)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Retail: ${"%,.1f".format(retailSub)}x", color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text("NII/HNI: ${"%,.1f".format(ipo.niiSub)}x", color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("QIB: ${"%,.1f".format(ipo.qibSub)}x", color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("Total: ${"%,.1f".format(ipo.totalSub)}x", color = AxePrimaryCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Text(
+                        text = if (retailSub > 1.0) "Retail allotment is executed by randomized lottery computerized draw under SEBI rules."
+                               else "Bids at cut-off price are entitled to full firm allotment.",
+                        color = AxeTextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+            }
+
             Spacer(modifier = Modifier.height(16.dp))
 
             Button(

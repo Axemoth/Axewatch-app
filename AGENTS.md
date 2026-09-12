@@ -68,9 +68,24 @@ Axewatch is a high-performance Android application built with Jetpack Compose an
   - Consolidated portfolio summary (Total Value, Total Invested, Overall Return, Day Return, XIRR).
   - Mutual Fund Suite: Category tabs (All, Flexi Cap, Large Cap, Small Cap, Mid Cap, Index, Hybrid, Debt), real-time search, 1Y/3Y/5Y CAGR returns, expense ratios, and asset allocation breakdown (Equity, Debt, Cash).
   - `MutualFundDetailModal`: Comprehensive deep-dive with fund details, top holdings, asset breakdown visualization, and direct investment simulator adding units into portfolio holdings.
+  - **Interactive SIP & Wealth Compounder**:
+    - Monthly investment slider (₹1,000–₹1,00,000), tenure slider (1–30 years), annual step-up slider (0–20%), and expected CAGR return slider (8–25%).
+    - Quick goal templates (First ₹1 Cr, Retirement 20Y, Child Education 12Y, Starter ₹5k).
+    - Dynamic compound wealth multiplier, invested capital vs. gains visual ratio bar, and direct top-fund integration.
   - Sector concentration and allocation risk indicators.
   - Add, edit, and delete individual stock and mutual fund holdings.
   - CSV Import support for Zerodha, Groww, and Angel One portfolio exports.
+
+### 6. Market Insights & Analytical Tools
+- **Market Breadth & Trading Session Barometer (`MarketScreen`)**:
+  - Live market status (Open/Closed) calculated against Indian trading hours (09:15–15:30 IST) with dynamic session status indicators.
+  - Interactive Advance/Decline ratio bar with 1-tap filtering for gainers and losers.
+- **52-Week Price Range Gauge & Price Target Alert Tool (`StockDetailModal`)**:
+  - 52-Week high/low visual slider gauge with current price pin and percentage distance from 52-week high.
+  - Interactive Price Target Alert setter with quick presets (+5% Target, +10% Breakout, -5% Stop-loss) and active alert badge.
+- **IPO Allotment Probability Matrix (`IpoCalculatorDialog`)**:
+  - Retail (RII) computerized lottery allotment probability calculations based on live subscription levels.
+  - Category subscription breakdown (Retail, NII/HNI, QIB, Total) with visual probability bar.
 
 ---
 
@@ -95,4 +110,8 @@ Axewatch is a high-performance Android application built with Jetpack Compose an
 - [x] Full Quant Model Report Card & calibration curve implemented in Paper Trading.
 - [x] Mutual Funds suite with category filters, detailed modal, and portfolio allocation added.
 - [x] Portfolio CSV import and holding management fully functional.
-- [x] Code compiles without errors (`compile_applet` passed) and all tests green.
+- [x] Market breadth barometer and live IST session status integrated on Market screen.
+- [x] 52-Week price range visual gauge and price target alert tool added to Stock Detail modal.
+- [x] Interactive SIP & Wealth Compounder with annual step-up and goal templates added to Portfolio.
+- [x] IPO Listing Day Gain Calculator enhanced with retail allotment probability matrix.
+- [x] Code compiles without errors (`compile_applet` passed) and all tests green (`testDebugUnitTest` passed).

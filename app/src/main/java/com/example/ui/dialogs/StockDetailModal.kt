@@ -2,9 +2,11 @@ package com.example.ui.dialogs
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -13,10 +15,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.filled.TrendingUp
@@ -29,6 +33,10 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -71,6 +79,8 @@ fun StockDetailModal(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val isBull = stock.isPositive
     val trendColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
+    var alertPrice by remember { mutableStateOf<Double?>(null) }
+    var isAlertActive by remember { mutableStateOf(false) }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -178,6 +188,219 @@ fun StockDetailModal(
                 Column {
                     Text("M-Cap (Cr)", color = AxeTextMuted, fontSize = 10.sp)
                     Text("₹${"%,.0f".format(stock.marketCapCr)}", color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // 52-Week Price Range Visual Gauge
+            val wLow = stock.week52Low
+            val wHigh = stock.week52High
+            val curPrice = stock.lastPrice
+            val rangeProgress = if (wHigh > wLow) {
+                ((curPrice - wLow) / (wHigh - wLow)).toFloat().coerceIn(0f, 1f)
+            } else 0.5f
+            val pctFromHigh = if (wHigh > 0) ((curPrice - wHigh) / wHigh) * 100 else 0.0
+            val pctFromLow = if (wLow > 0) ((curPrice - wLow) / wLow) * 100 else 0.0
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("52-WEEK PRICE RANGE", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text(
+                            text = "${"%,.1f".format(pctFromHigh)}% from 52W High",
+                            color = if (pctFromHigh >= -5.0) AxeEmeraldGreen else AxeAmber,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Range track with marker
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(24.dp),
+                        contentAlignment = Alignment.CenterStart
+                    ) {
+                        // Background track
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(3.dp))
+                                .background(AxeDarkSurfaceElevated)
+                        )
+
+                        // Current price pin/marker
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth(rangeProgress.coerceIn(0.02f, 0.98f))
+                                .height(6.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(14.dp)
+                                    .clip(CircleShape)
+                                    .background(AxePrimaryCyan)
+                                    .border(2.dp, AxeDarkBg, CircleShape)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("52W Low", color = AxeTextMuted, fontSize = 9.sp)
+                            Text("₹${"%,.2f".format(wLow)}", color = AxeTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("+${"%,.1f".format(pctFromLow)}%", color = AxeEmeraldGreen, fontSize = 9.sp)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Current", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text("₹${"%,.2f".format(curPrice)}", color = AxePrimaryCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("52W High", color = AxeTextMuted, fontSize = 9.sp)
+                            Text("₹${"%,.2f".format(wHigh)}", color = AxeTextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("${"%,.1f".format(pctFromHigh)}%", color = AxeRoseRed, fontSize = 9.sp)
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Interactive Price Target Alert Tool
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, if (isAlertActive) AxePrimaryCyan.copy(alpha = 0.5f) else AxeBorder, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Price Alert",
+                                tint = if (isAlertActive) AxePrimaryCyan else AxeTextMuted,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("PRICE TARGET ALERT", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        }
+
+                        if (isAlertActive) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(AxePrimaryCyan.copy(alpha = 0.2f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text("ACTIVE", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (isAlertActive && alertPrice != null) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(AxeDarkSurfaceElevated)
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(
+                                    text = "Alert set at ₹${"%,.2f".format(alertPrice)}",
+                                    color = AxeTextPrimary,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (alertPrice!! > stock.lastPrice) "Triggers when price rises by +${"%,.1f".format(((alertPrice!! - stock.lastPrice)/stock.lastPrice)*100)}%"
+                                           else "Triggers when price drops by ${"%,.1f".format(((alertPrice!! - stock.lastPrice)/stock.lastPrice)*100)}%",
+                                    color = AxeTextMuted,
+                                    fontSize = 10.sp
+                                )
+                            }
+
+                            Button(
+                                onClick = {
+                                    isAlertActive = false
+                                    alertPrice = null
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = AxeRedSubtle),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text("Remove", color = AxeRoseRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } else {
+                        // Preset target buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val p5 = (stock.lastPrice * 1.05)
+                            val p10 = (stock.lastPrice * 1.10)
+                            val m5 = (stock.lastPrice * 0.95)
+
+                            listOf(
+                                Pair("+5% Target (₹${"%,.0f".format(p5)})", p5),
+                                Pair("+10% Breakout (₹${"%,.0f".format(p10)})", p10),
+                                Pair("-5% Stop (₹${"%,.0f".format(m5)})", m5)
+                            ).forEach { (label, target) ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(AxeDarkSurfaceElevated)
+                                        .clickable {
+                                            alertPrice = target
+                                            isAlertActive = true
+                                        }
+                                        .padding(vertical = 8.dp, horizontal = 4.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = label,
+                                        color = AxePrimaryCyan,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
 

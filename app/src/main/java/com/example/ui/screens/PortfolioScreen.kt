@@ -40,6 +40,8 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -240,6 +242,7 @@ fun PortfolioScreen(
                 val tabs = listOf(
                     "Holdings (${holdings.size})",
                     "Mutual Funds (${mutualFunds.size})",
+                    "SIP Calculator",
                     "Risk & Allocation",
                     "Watchlist (${watchlist.size})"
                 )
@@ -707,6 +710,17 @@ fun PortfolioScreen(
                 }
             }
             2 -> {
+                // Interactive SIP & Wealth Compounder
+                item {
+                    SipWealthCalculator(
+                        mutualFunds = mutualFunds,
+                        onSelectFund = { fund ->
+                            selectedMfModal = fund
+                        }
+                    )
+                }
+            }
+            3 -> {
                 // Risk & Allocation Analysis (Portfolio Concentration & Sector Exposure)
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -833,7 +847,7 @@ fun PortfolioScreen(
                     }
                 }
             }
-            3 -> {
+            4 -> {
                 // Watchlist
                 if (watchlist.isEmpty()) {
                     item {
@@ -1036,3 +1050,347 @@ fun PortfolioScreen(
         )
     }
 }
+
+@Composable
+fun SipWealthCalculator(
+    mutualFunds: List<MutualFundScheme>,
+    onSelectFund: (MutualFundScheme) -> Unit
+) {
+    var monthlyInvestment by remember { mutableStateOf(10000.0) }
+    var expectedReturnRate by remember { mutableStateOf(14.0) }
+    var durationYears by remember { mutableIntStateOf(10) }
+    var annualStepUpPercent by remember { mutableStateOf(10.0) }
+
+    // Calculation
+    val (totalInvested, futureValue) = remember(monthlyInvestment, expectedReturnRate, durationYears, annualStepUpPercent) {
+        val totalMonths = durationYears * 12
+        val monthlyRate = (expectedReturnRate / 100.0) / 12.0
+        val stepUpRate = annualStepUpPercent / 100.0
+
+        var investedSum = 0.0
+        var maturitySum = 0.0
+
+        for (year in 0 until durationYears) {
+            val monthlyAmtForYear = monthlyInvestment * Math.pow(1.0 + stepUpRate, year.toDouble())
+            for (month in 0 until 12) {
+                val monthsRemaining = totalMonths - (year * 12 + month)
+                investedSum += monthlyAmtForYear
+                maturitySum += monthlyAmtForYear * Math.pow(1.0 + monthlyRate, monthsRemaining.toDouble())
+            }
+        }
+        Pair(investedSum, maturitySum)
+    }
+
+    val wealthGain = (futureValue - totalInvested).coerceAtLeast(0.0)
+    val returnMultiplier = if (totalInvested > 0) futureValue / totalInvested else 1.0
+    val investedRatio = if (futureValue > 0) (totalInvested / futureValue).toFloat().coerceIn(0.05f, 0.95f) else 0.5f
+
+    fun formatInr(value: Double): String {
+        return when {
+            value >= 10000000.0 -> "₹${"%,.2f".format(value / 10000000.0)} Cr"
+            value >= 100000.0 -> "₹${"%,.2f".format(value / 100000.0)} Lakh"
+            else -> "₹${"%,.0f".format(value)}"
+        }
+    }
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        // Card 1: Projected Wealth Summary Display
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(AxeDarkSurface)
+                .border(1.dp, AxePrimaryCyan.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                .padding(16.dp)
+        ) {
+            Column {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "PROJECTED MATURITY VALUE",
+                        color = AxeTextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(AxeGreenSubtle)
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "${"%,.1f".format(returnMultiplier)}x Multiplier",
+                            color = AxeEmeraldGreen,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Text(
+                    text = formatInr(futureValue),
+                    color = AxeEmeraldGreen,
+                    fontSize = 26.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Breakdown: Invested vs Wealth Gain
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text("Total Invested", color = AxeTextMuted, fontSize = 10.sp)
+                        Text(formatInr(totalInvested), color = AxePrimaryCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text("Wealth Gain", color = AxeTextMuted, fontSize = 10.sp)
+                        val gainPct = if (totalInvested > 0) ((wealthGain / totalInvested) * 100) else 0.0
+                        Text(
+                            text = "${formatInr(wealthGain)} (+${"%,.0f".format(gainPct)}%)",
+                            color = AxeEmeraldGreen,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Split Bar (Cyan for invested, Emerald for gains)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(8.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(AxeDarkSurfaceElevated)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(investedRatio)
+                            .background(AxePrimaryCyan)
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(AxeEmeraldGreen)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "● Capital Invested (${(investedRatio * 100).toInt()}%)",
+                        color = AxePrimaryCyan,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "● Compounded Returns (${((1f - investedRatio) * 100).toInt()}%)",
+                        color = AxeEmeraldGreen,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+
+        // Quick Goal Presets
+        Column {
+            Text("QUICK GOAL TEMPLATES", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(modifier = Modifier.height(6.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    Triple("First ₹1 Cr", 15000.0, 15),
+                    Triple("Retirement 20Y", 25000.0, 20),
+                    Triple("Child Ed 12Y", 10000.0, 12),
+                    Triple("Starter ₹5k", 5000.0, 10)
+                ).forEach { (label, monthly, years) ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(AxeDarkSurfaceElevated)
+                            .clickable {
+                                monthlyInvestment = monthly
+                                durationYears = years
+                                expectedReturnRate = 14.0
+                                annualStepUpPercent = 10.0
+                            }
+                            .padding(vertical = 6.dp, horizontal = 2.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(label, color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                    }
+                }
+            }
+        }
+
+        // Card 2: Interactive Parameter Sliders
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(AxeDarkSurface)
+                .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+                .padding(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                // Monthly Investment Slider
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Monthly Investment", color = AxeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("₹${"%,.0f".format(monthlyInvestment)}/mo", color = AxePrimaryCyan, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = monthlyInvestment.toFloat(),
+                        onValueChange = { monthlyInvestment = ((it / 1000).toInt() * 1000).toDouble().coerceAtLeast(1000.0) },
+                        valueRange = 1000f..100000f,
+                        steps = 98,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AxePrimaryCyan,
+                            activeTrackColor = AxePrimaryCyan,
+                            inactiveTrackColor = AxeDarkSurfaceElevated
+                        )
+                    )
+                }
+
+                // Expected Return Rate Slider
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Expected Annual Return", color = AxeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${"%,.1f".format(expectedReturnRate)}% p.a.", color = AxeEmeraldGreen, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = expectedReturnRate.toFloat(),
+                        onValueChange = { expectedReturnRate = (Math.round(it * 2) / 2.0) },
+                        valueRange = 8f..25f,
+                        steps = 33,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AxeEmeraldGreen,
+                            activeTrackColor = AxeEmeraldGreen,
+                            inactiveTrackColor = AxeDarkSurfaceElevated
+                        )
+                    )
+                }
+
+                // Duration in Years Slider
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Time Horizon", color = AxeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("$durationYears Years (${durationYears * 12} mos)", color = AxeAmber, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = durationYears.toFloat(),
+                        onValueChange = { durationYears = it.toInt() },
+                        valueRange = 1f..30f,
+                        steps = 28,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AxeAmber,
+                            activeTrackColor = AxeAmber,
+                            inactiveTrackColor = AxeDarkSurfaceElevated
+                        )
+                    )
+                }
+
+                // Annual Step-Up Slider
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Annual Step-Up Increment", color = AxeTextSecondary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("${annualStepUpPercent.toInt()}% each year", color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(
+                        value = annualStepUpPercent.toFloat(),
+                        onValueChange = { annualStepUpPercent = (Math.round(it)).toDouble() },
+                        valueRange = 0f..20f,
+                        steps = 19,
+                        colors = SliderDefaults.colors(
+                            thumbColor = AxeTextPrimary,
+                            activeTrackColor = AxeTextPrimary,
+                            inactiveTrackColor = AxeDarkSurfaceElevated
+                        )
+                    )
+                    Text("Increasing SIP with salary raises dramatically accelerates compounding!", color = AxeTextMuted, fontSize = 10.sp)
+                }
+            }
+        }
+
+        // Top Mutual Funds to Start this SIP
+        if (mutualFunds.isNotEmpty()) {
+            Column {
+                Text(
+                    text = "TOP RATED FUNDS FOR THIS SIP",
+                    color = AxeTextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                mutualFunds.take(3).forEach { fund ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AxeDarkSurface)
+                            .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                            .clickable { onSelectFund(fund) }
+                            .padding(12.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(fund.name, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("${fund.category} · Exp: ${fund.expenseRatio}%", color = AxeTextMuted, fontSize = 10.sp)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("+${fund.return3Yr}% 3Y", color = AxeEmeraldGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text("Invest SIP →", color = AxePrimaryCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+

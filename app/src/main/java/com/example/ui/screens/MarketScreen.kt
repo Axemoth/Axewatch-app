@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -201,6 +203,15 @@ fun MarketScreen(
                     }
                 }
             }
+        }
+
+        // Section: Market Status & Live Advance-Decline Breadth Barometer
+        item {
+            MarketStatusAndBreadthBar(
+                stocks = stocks,
+                onFilterGainers = { stockFilterTab = 1 },
+                onFilterLosers = { stockFilterTab = 2 }
+            )
         }
 
         // Section: Market Indices
@@ -727,3 +738,143 @@ private fun StockListItem(
         }
     }
 }
+
+@Composable
+fun MarketStatusAndBreadthBar(
+    stocks: List<StockQuote>,
+    onFilterGainers: () -> Unit,
+    onFilterLosers: () -> Unit
+) {
+    // Determine Market Open/Close based on Indian Market Hours (Mon-Fri 09:15 to 15:30 IST)
+    val isMarketOpen = remember {
+        val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
+        val day = cal.get(java.util.Calendar.DAY_OF_WEEK)
+        val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
+        val minute = cal.get(java.util.Calendar.MINUTE)
+        val isWeekday = day in java.util.Calendar.MONDAY..java.util.Calendar.FRIDAY
+        val isTime = (hour > 9 || (hour == 9 && minute >= 15)) && (hour < 15 || (hour == 15 && minute <= 30))
+        isWeekday && isTime
+    }
+
+    val total = stocks.size
+    val advances = stocks.count { it.percentChange > 0 }
+    val declines = stocks.count { it.percentChange < 0 }
+    val unchanged = total - advances - declines
+    val advancePct = if (total > 0) (advances.toFloat() / total.toFloat()) else 0.5f
+    val declinePct = if (total > 0) (declines.toFloat() / total.toFloat()) else 0.5f
+    val adRatio = if (declines > 0) "%.2f".format(advances.toDouble() / declines.toDouble()) else "—"
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(AxeDarkSurface)
+            .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+            .padding(12.dp)
+    ) {
+        Column {
+            // Header: Live Indicator & Market Breadth Title
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isMarketOpen) AxeEmeraldGreen else AxeAmber)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (isMarketOpen) "LIVE MARKET (09:15 - 15:30 IST)" else "MARKET CLOSED (Next: 09:15 AM IST)",
+                        color = if (isMarketOpen) AxeEmeraldGreen else AxeAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
+                    )
+                }
+
+                Text(
+                    text = "A/D Ratio: ${adRatio}x",
+                    color = if (advances >= declines) AxeEmeraldGreen else AxeRoseRed,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Advances vs Declines Counts with Clickable Quick Filters
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onFilterGainers() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Advances: ", color = AxeTextMuted, fontSize = 11.sp)
+                    Text(
+                        text = "$advances (${(advancePct * 100).toInt()}%)",
+                        color = AxeEmeraldGreen,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                if (unchanged > 0) {
+                    Text("Flat: $unchanged", color = AxeTextMuted, fontSize = 10.sp)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onFilterLosers() }
+                        .padding(horizontal = 4.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Declines: ", color = AxeTextMuted, fontSize = 11.sp)
+                    Text(
+                        text = "$declines (${(declinePct * 100).toInt()}%)",
+                        color = AxeRoseRed,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Visual Breadth Progress Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(AxeDarkSurfaceElevated)
+            ) {
+                if (advancePct > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(advancePct.coerceIn(0.02f, 0.98f))
+                            .background(AxeEmeraldGreen)
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(AxeRoseRed)
+                )
+            }
+        }
+    }
+}
+
