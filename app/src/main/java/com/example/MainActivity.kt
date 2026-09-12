@@ -105,6 +105,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val positions by viewModel.paperPositions.collectAsState()
     val orders by viewModel.paperOrders.collectAsState()
     val tradeIdeas by viewModel.tradeIdeas.collectAsState()
+    val quantModelReportCard by viewModel.quantModelReportCard.collectAsState()
 
     // Portfolio
     val summary by viewModel.portfolioSummary.collectAsState()
@@ -227,6 +228,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     positions = positions,
                     orders = orders,
                     tradeIdeas = tradeIdeas,
+                    reportCard = quantModelReportCard,
                     onExecuteTradeIdea = { idea, qty ->
                         val quote = stocks.find { it.symbol == idea.symbol } ?: StockQuote(
                             symbol = idea.symbol,
@@ -269,6 +271,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     mutualFunds = mutualFunds,
                     concentration = portfolioConcentration,
                     onAddHoldingClick = { showAddHoldingDialog = true },
+                    onAddDirectHolding = { sym, name, qty, price, sec ->
+                        viewModel.addHolding(sym, name, "mf", qty, price, sec)
+                    },
                     onUpdateHolding = { id, qty, price ->
                         viewModel.updateHolding(id, qty, price)
                     },

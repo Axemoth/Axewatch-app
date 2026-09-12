@@ -20,6 +20,7 @@ import com.example.data.model.MutualFundScheme
 import com.example.data.model.PastIpoItem
 import com.example.data.model.PortfolioConcentration
 import com.example.data.model.PortfolioSummary
+import com.example.data.model.QuantModelReportCard
 import com.example.data.model.RegistrarLink
 import com.example.data.model.RegistrarSourceHealth
 import com.example.data.model.SectorHeatmapItem
@@ -89,6 +90,10 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     val tradeIdeas: StateFlow<List<TradeIdea>> = repository.tradeIdeas.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+    )
+
+    val quantModelReportCard: StateFlow<QuantModelReportCard> = repository.quantModelReportCard.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), QuantModelReportCard()
     )
 
     val lastRefreshTime: StateFlow<Long> = repository.lastRefreshTime.stateIn(

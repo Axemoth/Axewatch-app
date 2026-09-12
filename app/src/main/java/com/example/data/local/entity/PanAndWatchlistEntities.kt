@@ -31,11 +31,25 @@ data class AllotmentRecordEntity(
     val ipoName: String,
     val sharesApplied: Int,
     val sharesAllotted: Int,
-    val status: String, // "ALLOTTED", "NOT_ALLOTTED", "AWAITING", "REFUNDED"
+    val status: String, // "ALLOTTED", "NOT_ALLOTTED", "NOT_APPLIED", "RESULTS_NOT_OUT"
     val registrar: String,
     val checkedAt: Long = System.currentTimeMillis(),
     val applicationNo: String = ""
-)
+) {
+    val isAllotted: Boolean get() = status == "ALLOTTED"
+    val isNotAllotted: Boolean get() = status == "NOT_ALLOTTED"
+    val isNotApplied: Boolean get() = status == "NOT_APPLIED"
+    val isResultsNotOut: Boolean get() = status == "RESULTS_NOT_OUT" || status == "AWAITING"
+
+    val statusLabel: String
+        get() = when (status) {
+            "ALLOTTED" -> "Allotted"
+            "NOT_ALLOTTED" -> "Not Allotted"
+            "NOT_APPLIED" -> "Not Applied"
+            "RESULTS_NOT_OUT", "AWAITING" -> "Results Not Out Yet"
+            else -> status
+        }
+}
 
 @Entity(tableName = "watchlist")
 data class WatchlistEntity(

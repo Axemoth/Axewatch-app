@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -19,13 +20,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.PieChart
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,6 +62,7 @@ import com.example.data.model.MutualFundScheme
 import com.example.data.model.PortfolioConcentration
 import com.example.data.model.PortfolioSummary
 import com.example.data.model.StockQuote
+import com.example.ui.dialogs.MutualFundDetailModal
 import com.example.ui.theme.AxeAmber
 import com.example.ui.theme.AxeBorder
 import com.example.ui.theme.AxeDarkBg
@@ -80,6 +86,7 @@ fun PortfolioScreen(
     mutualFunds: List<MutualFundScheme> = emptyList(),
     concentration: PortfolioConcentration = PortfolioConcentration("None", 0.0, false, 0.0, 0.0, 0.0, "None", 0.0, "None", 0.0),
     onAddHoldingClick: () -> Unit,
+    onAddDirectHolding: (symbol: String, name: String, quantity: Double, buyPrice: Double, sector: String) -> Unit = { _, _, _, _, _ -> },
     onUpdateHolding: (id: Long, quantity: Double, buyPrice: Double) -> Unit = { _, _, _ -> },
     onDeleteHolding: (Long) -> Unit,
     onImportCsv: (String) -> Unit = {},
@@ -90,8 +97,30 @@ fun PortfolioScreen(
     var portTab by remember { mutableIntStateOf(0) } // 0: Holdings, 1: Mutual Funds, 2: Allocation & Risk, 3: Watchlist
     var showCsvImportDialog by remember { mutableStateOf(false) }
     var editingHolding by remember { mutableStateOf<HoldingEntity?>(null) }
+    var selectedMfModal by remember { mutableStateOf<MutualFundScheme?>(null) }
+    var mfCategoryFilter by remember { mutableStateOf("All") }
+    var mfSearchQuery by remember { mutableStateOf("") }
 
     val priceMap = remember(stocks) { stocks.associateBy({ it.symbol }, { it.lastPrice }) }
+
+    val filteredMutualFunds = remember(mutualFunds, mfCategoryFilter, mfSearchQuery) {
+        val byCat = if (mfCategoryFilter == "All") {
+            mutualFunds
+        } else {
+            mutualFunds.filter { it.category.equals(mfCategoryFilter, ignoreCase = true) }
+        }
+        if (mfSearchQuery.isBlank()) {
+            byCat
+        } else {
+            val q = mfSearchQuery.trim().lowercase()
+            byCat.filter {
+                it.name.lowercase().contains(q) ||
+                it.fundHouse.lowercase().contains(q) ||
+                it.category.lowercase().contains(q) ||
+                it.code.contains(q)
+            }
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -356,56 +385,321 @@ fun PortfolioScreen(
                 }
             }
             1 -> {
-                // Mutual Funds Scheme List (from upstream repository)
-                if (mutualFunds.isEmpty()) {
-                    item {
-                        Box(
-                            modifier = Modifier.fillMaxWidth().padding(32.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("No mutual fund data synced yet.", color = AxeTextMuted, fontSize = 12.sp)
-                        }
-                    }
-                } else {
-                    items(mutualFunds, key = { it.code }) { mf ->
-                        val isPos = mf.dayChangePercent >= 0
+                // Search Bar & Filter Header
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // Search Box
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(AxeDarkSurface)
-                                .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+                                .border(1.dp, if (mfSearchQuery.isNotEmpty()) AxePrimaryCyan else AxeBorder, RoundedCornerShape(12.dp))
+                                .padding(horizontal = 14.dp, vertical = 10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Search,
+                                    contentDescription = "Search MF",
+                                    tint = if (mfSearchQuery.isNotEmpty()) AxePrimaryCyan else AxeTextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                BasicTextField(
+                                    value = mfSearchQuery,
+                                    onValueChange = { mfSearchQuery = it },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        color = AxeTextPrimary,
+                                        fontSize = 13.sp
+                                    ),
+                                    modifier = Modifier.weight(1f),
+                                    decorationBox = { innerTextField ->
+                                        if (mfSearchQuery.isEmpty()) {
+                                            Text(
+                                                text = "Search mutual funds by name, house, or AMFI code...",
+                                                color = AxeTextMuted,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                        innerTextField()
+                                    }
+                                )
+                                if (mfSearchQuery.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = { mfSearchQuery = "" },
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Clear",
+                                            tint = AxeTextMuted,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // Category Filter Chips
+                        val mfCategories = listOf("All", "Flexi Cap", "Large Cap", "Small Cap", "Mid Cap", "Hybrid", "Debt", "Index")
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(mfCategories) { cat ->
+                                val isSelected = mfCategoryFilter.equals(cat, ignoreCase = true)
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(20.dp))
+                                        .background(if (isSelected) AxePrimaryCyan else AxeDarkSurface)
+                                        .border(1.dp, if (isSelected) AxePrimaryCyan else AxeBorder, RoundedCornerShape(20.dp))
+                                        .clickable { mfCategoryFilter = cat }
+                                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text(
+                                        text = cat,
+                                        color = if (isSelected) Color.Black else AxeTextSecondary,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        // Result count info
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "${filteredMutualFunds.size} SCHEMES AVAILABLE",
+                                color = AxeTextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "Direct Growth · Zero Commission",
+                                color = AxePrimaryCyan,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+                }
+
+                // Mutual Funds Scheme List
+                if (filteredMutualFunds.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(32.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No mutual funds found matching \"$mfSearchQuery\"", color = AxeTextMuted, fontSize = 12.sp)
+                        }
+                    }
+                } else {
+                    items(filteredMutualFunds, key = { it.code }) { mf ->
+                        val isPos = mf.dayChangePercent >= 0
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(AxeDarkSurface)
+                                .border(1.dp, AxeBorder, RoundedCornerShape(14.dp))
+                                .clickable { selectedMfModal = mf }
                                 .padding(14.dp)
                         ) {
                             Column {
+                                // Top row: Category badge, Fund house, Code
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.Top
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(mf.name, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                        Text("${mf.category} · ${mf.fundHouse}", color = AxeTextMuted, fontSize = 10.sp)
-                                    }
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        Text("NAV: ₹${"%,.2f".format(mf.nav)}", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(AxePrimaryCyan.copy(alpha = 0.15f))
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = mf.category.uppercase(),
+                                                color = AxePrimaryCyan,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "${if (isPos) "+" else ""}${"%,.2f".format(mf.dayChangePercent)}%",
-                                            color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
-                                            fontSize = 11.sp,
+                                            text = mf.fundHouse,
+                                            color = AxeTextMuted,
+                                            fontSize = 11.sp
+                                        )
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(AxeGreenSubtle)
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = mf.riskLevel,
+                                            color = AxeEmeraldGreen,
+                                            fontSize = 9.sp,
                                             fontWeight = FontWeight.SemiBold
                                         )
                                     }
                                 }
-                                Spacer(modifier = Modifier.height(8.dp))
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                // Scheme Name
+                                Text(
+                                    text = mf.name,
+                                    color = AxeTextPrimary,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    lineHeight = 18.sp
+                                )
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // NAV and Returns Grid
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text("AUM: ₹${mf.aumCr.toInt()} Cr", color = AxeTextSecondary, fontSize = 10.sp)
-                                    Text("Expense: ${mf.expenseRatio}%", color = AxeTextSecondary, fontSize = 10.sp)
-                                    Text("1Y: +${mf.return1Yr}%", color = AxeEmeraldGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                    Text("3Y: +${mf.return3Yr}%", color = AxeEmeraldGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    Column {
+                                        Text("Current NAV", color = AxeTextMuted, fontSize = 10.sp)
+                                        Text(
+                                            text = "₹${"%,.2f".format(mf.nav)}",
+                                            color = AxeTextPrimary,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "${if (isPos) "+" else ""}${"%,.2f".format(mf.dayChangePercent)}% today",
+                                            color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("1Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
+                                        Text(
+                                            text = "+${mf.return1Yr}%",
+                                            color = AxeEmeraldGreen,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text("Exp: ${mf.expenseRatio}%", color = AxeTextSecondary, fontSize = 10.sp)
+                                    }
+
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Text("3Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
+                                        Text(
+                                            text = "+${mf.return3Yr}%",
+                                            color = AxeEmeraldGreen,
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text("AUM: ₹${"%,.0f".format(mf.aumCr)} Cr", color = AxeTextSecondary, fontSize = 10.sp)
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // Asset Mix Bar Preview (What your money is in)
+                                Column {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("Asset Mix", color = AxeTextMuted, fontSize = 10.sp)
+                                        Text(
+                                            text = "${mf.equityPercent}% Equity · ${mf.debtPercent}% Debt · ${mf.cashPercent}% Cash",
+                                            color = AxeTextSecondary,
+                                            fontSize = 10.sp
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(6.dp)
+                                            .clip(RoundedCornerShape(3.dp))
+                                            .background(AxeDarkSurfaceElevated)
+                                    ) {
+                                        Row(modifier = Modifier.fillMaxWidth()) {
+                                            if (mf.equityPercent > 0) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(mf.equityPercent.toFloat())
+                                                        .fillMaxHeight()
+                                                        .background(Color(0xFF38BDF8))
+                                                )
+                                            }
+                                            if (mf.debtPercent > 0) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(mf.debtPercent.toFloat())
+                                                        .fillMaxHeight()
+                                                        .background(Color(0xFFF87171))
+                                                )
+                                            }
+                                            if (mf.cashPercent > 0) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .weight(mf.cashPercent.toFloat())
+                                                        .fillMaxHeight()
+                                                        .background(Color(0xFFFBBF24))
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                // View Details & Holdings Action Link
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Visibility,
+                                            contentDescription = null,
+                                            tint = AxePrimaryCyan,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "View Holdings & Asset Allocation",
+                                            color = AxePrimaryCyan,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                    }
+
+                                    Text(
+                                        text = "Tap to Invest →",
+                                        color = AxeTextMuted,
+                                        fontSize = 11.sp
+                                    )
                                 }
                             }
                         }
@@ -727,6 +1021,17 @@ fun PortfolioScreen(
                 TextButton(onClick = { showCsvImportDialog = false }) {
                     Text("Cancel", color = AxeTextMuted)
                 }
+            }
+        )
+    }
+
+    selectedMfModal?.let { scheme ->
+        MutualFundDetailModal(
+            scheme = scheme,
+            onDismiss = { selectedMfModal = null },
+            onAddToPortfolio = { sym, name, qty, buyPrice ->
+                onAddDirectHolding(sym, name, qty, buyPrice, scheme.category)
+                selectedMfModal = null
             }
         )
     }

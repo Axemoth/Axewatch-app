@@ -18,12 +18,14 @@ import com.example.data.model.MutualFundScheme
 import com.example.data.model.PastIpoItem
 import com.example.data.model.PortfolioConcentration
 import com.example.data.model.PortfolioSummary
+import com.example.data.model.QuantModelReportCard
 import com.example.data.model.RegistrarLink
 import com.example.data.model.RegistrarSourceHealth
 import com.example.data.model.SectorHeatmapItem
 import com.example.data.model.StockQuote
 import com.example.data.model.TradeIdea
 import com.example.data.model.TradeOutlook
+import com.example.data.provider.IndexConstituentsProvider
 import com.example.data.remote.IpoAllotmentService
 import com.example.data.remote.IpoGmpService
 import com.example.data.remote.MutualFundService
@@ -88,6 +90,9 @@ class AxewatchRepository(private val db: AppDatabase) {
     private val _tradeIdeas = MutableStateFlow<List<TradeIdea>>(emptyList())
     val tradeIdeas: Flow<List<TradeIdea>> = _tradeIdeas.asStateFlow()
 
+    private val _quantModelReportCard = MutableStateFlow(QuantModelReportCard())
+    val quantModelReportCard: Flow<QuantModelReportCard> = _quantModelReportCard.asStateFlow()
+
     private val _mutualFunds = MutableStateFlow<List<MutualFundScheme>>(emptyList())
     val mutualFunds: Flow<List<MutualFundScheme>> = _mutualFunds.asStateFlow()
 
@@ -117,21 +122,8 @@ class AxewatchRepository(private val db: AppDatabase) {
         )
         _indices.value = initialIndices
 
-        val initialStocks = listOf(
-            StockQuote("RELIANCE", "Reliance Industries Ltd", 1388.50, 18.20, 1.33, 1395.00, 1370.00, "9.4M", "Energy", 1608.80, 1150.00, 26.4, 1878000.0),
-            StockQuote("TCS", "Tata Consultancy Services", 4120.00, 54.00, 1.33, 4145.00, 4070.00, "2.8M", "IT", 4585.00, 3313.00, 31.2, 1490000.0),
-            StockQuote("HDFCBANK", "HDFC Bank Ltd", 1664.20, -6.80, -0.41, 1682.00, 1658.00, "14.2M", "Banking", 1794.00, 1363.00, 18.9, 1265000.0),
-            StockQuote("BHARTIARTL", "Bharti Airtel Ltd", 1640.80, 22.40, 1.38, 1648.00, 1620.00, "4.1M", "Telecom", 1779.00, 920.00, 52.0, 960000.0),
-            StockQuote("ICICIBANK", "ICICI Bank Ltd", 1235.40, 4.10, 0.33, 1242.00, 1228.00, "8.6M", "Banking", 1332.00, 980.00, 19.5, 868000.0),
-            StockQuote("INFY", "Infosys Ltd", 1920.60, 24.80, 1.31, 1932.00, 1898.00, "6.3M", "IT", 1991.00, 1358.00, 28.1, 797000.0),
-            StockQuote("TATAMOTORS", "Tata Motors Ltd", 848.20, 14.50, 1.74, 852.00, 832.00, "11.5M", "Automobile", 1179.00, 715.00, 10.4, 312000.0),
-            StockQuote("ITC", "ITC Ltd", 486.10, -2.40, -0.49, 491.50, 484.20, "7.9M", "FMCG", 528.00, 399.00, 29.8, 607000.0),
-            StockQuote("LT", "Larsen & Toubro Ltd", 3620.00, 32.00, 0.89, 3640.00, 3580.00, "1.9M", "Infrastructure", 3919.00, 2800.00, 34.6, 498000.0),
-            StockQuote("SBIN", "State Bank of India", 812.30, -3.20, -0.39, 821.50, 809.00, "12.1M", "Banking", 912.00, 582.00, 11.2, 725000.0),
-            StockQuote("MARUTI", "Maruti Suzuki India", 11840.00, 110.00, 0.94, 11920.00, 11700.00, "0.5M", "Automobile", 13680.00, 9737.00, 25.8, 372000.0),
-            StockQuote("WIPRO", "Wipro Ltd", 542.80, 8.40, 1.57, 546.00, 534.00, "5.2M", "IT", 580.00, 375.00, 24.2, 283000.0)
-        )
-        _stocks.value = initialStocks
+        // Initialize with all 50 NIFTY 50 constituent stocks
+        _stocks.value = IndexConstituentsProvider.nifty50Constituents.map { it.toStockQuote() }
 
         val initialIpos = listOf(
             IpoIssue(
@@ -362,56 +354,114 @@ class AxewatchRepository(private val db: AppDatabase) {
                 name = "Tata Consultancy Services",
                 signal = "BUY",
                 currentPrice = 4120.00,
+                entryPrice = 4105.00,
                 stopLoss = 4015.00,
                 targetPrice = 4280.00,
+                targetPrice2 = 4340.00,
                 riskReward = "1:1.52",
                 horizonDays = 8,
                 accuracy = 59.2,
+                score = 74,
+                driftPercent = 0.36,
                 suggestedQty05Pct = 12,
                 suggestedQty1Pct = 24,
-                suggestedQty2Pct = 48
+                suggestedQty2Pct = 48,
+                reason = "Multi-timeframe breakout above 20 EMA with positive volume expansion and IT sector momentum."
             ),
             TradeIdea(
                 symbol = "TATAMOTORS",
                 name = "Tata Motors Ltd",
                 signal = "BUY",
                 currentPrice = 848.20,
+                entryPrice = 844.00,
                 stopLoss = 824.00,
                 targetPrice = 886.00,
+                targetPrice2 = 910.00,
                 riskReward = "1:1.56",
                 horizonDays = 6,
                 accuracy = 61.4,
+                score = 82,
+                driftPercent = 0.50,
                 suggestedQty05Pct = 58,
                 suggestedQty1Pct = 117,
-                suggestedQty2Pct = 235
+                suggestedQty2Pct = 235,
+                reason = "Commercial vehicle order book revival and strong JLR global delivery outlook."
             ),
             TradeIdea(
                 symbol = "BHARTIARTL",
                 name = "Bharti Airtel Ltd",
                 signal = "BUY",
                 currentPrice = 1640.80,
+                entryPrice = 1632.00,
                 stopLoss = 1590.00,
                 targetPrice = 1720.00,
+                targetPrice2 = 1755.00,
                 riskReward = "1:1.55",
                 horizonDays = 10,
-                accuracy = 58.0,
+                accuracy = 64.0,
+                score = 78,
+                driftPercent = 0.54,
                 suggestedQty05Pct = 30,
                 suggestedQty1Pct = 60,
-                suggestedQty2Pct = 120
+                suggestedQty2Pct = 120,
+                reason = "ARPU expansion trajectory and steady 5G monetization gains."
             ),
             TradeIdea(
                 symbol = "HDFCBANK",
                 name = "HDFC Bank Ltd",
                 signal = "SELL",
                 currentPrice = 1664.20,
+                entryPrice = 1668.00,
                 stopLoss = 1695.00,
                 targetPrice = 1618.00,
+                targetPrice2 = 1595.00,
                 riskReward = "1:1.50",
                 horizonDays = 7,
                 accuracy = 56.5,
+                score = -62,
+                driftPercent = -0.23,
                 suggestedQty05Pct = 32,
                 suggestedQty1Pct = 64,
-                suggestedQty2Pct = 128
+                suggestedQty2Pct = 128,
+                reason = "Overbought technical rejection at 1,680 resistance with slowing deposit growth."
+            ),
+            TradeIdea(
+                symbol = "RELIANCE",
+                name = "Reliance Industries Ltd",
+                signal = "BUY",
+                currentPrice = 1388.50,
+                entryPrice = 1380.00,
+                stopLoss = 1350.00,
+                targetPrice = 1445.00,
+                targetPrice2 = 1475.00,
+                riskReward = "1:1.48",
+                horizonDays = 12,
+                accuracy = 60.5,
+                score = 69,
+                driftPercent = 0.61,
+                suggestedQty05Pct = 35,
+                suggestedQty1Pct = 71,
+                suggestedQty2Pct = 142,
+                reason = "Refining margin recovery coupled with retail segment EBITDA expansion."
+            ),
+            TradeIdea(
+                symbol = "MARUTI",
+                name = "Maruti Suzuki India",
+                signal = "BUY",
+                currentPrice = 11840.00,
+                entryPrice = 11750.00,
+                stopLoss = 11520.00,
+                targetPrice = 12350.00,
+                targetPrice2 = 12600.00,
+                riskReward = "1:1.59",
+                horizonDays = 9,
+                accuracy = 63.2,
+                score = 76,
+                driftPercent = 0.76,
+                suggestedQty05Pct = 4,
+                suggestedQty1Pct = 8,
+                suggestedQty2Pct = 17,
+                reason = "Festive season inventory ramp-up and hybrid SUV model market share gains."
             )
         )
         _tradeIdeas.value = initialIdeas
@@ -429,10 +479,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 74200.0,
                 return1Yr = 28.4,
                 return3Yr = 21.2,
+                return5Yr = 19.8,
                 equityPercent = 84.5,
                 debtPercent = 9.8,
                 cashPercent = 5.7,
-                topHoldings = listOf("HDFC Bank", "Bajaj Holdings", "Power Grid", "ITC", "Alphabet Inc")
+                topHoldings = listOf("HDFC Bank (8.4%)", "Bajaj Holdings (6.8%)", "Power Grid (5.4%)", "ITC (4.8%)", "Alphabet Inc (4.2%)"),
+                benchmark = "NIFTY 500 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "120828",
@@ -446,10 +499,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 25400.0,
                 return1Yr = 38.6,
                 return3Yr = 32.4,
+                return5Yr = 30.1,
                 equityPercent = 93.2,
                 debtPercent = 0.0,
                 cashPercent = 6.8,
-                topHoldings = listOf("Reliance Industries", "Jio Financial", "Aegis Logistics", "Bikaji", "IRB Infra")
+                topHoldings = listOf("Reliance Industries (7.1%)", "Jio Financial (5.6%)", "Aegis Logistics (4.9%)", "Bikaji Foods (4.3%)", "IRB Infra (3.8%)"),
+                benchmark = "NIFTY Smallcap 250 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "118834",
@@ -463,10 +519,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 38100.0,
                 return1Yr = 21.8,
                 return3Yr = 16.5,
+                return5Yr = 15.2,
                 equityPercent = 97.4,
                 debtPercent = 0.0,
                 cashPercent = 2.6,
-                topHoldings = listOf("HDFC Bank", "ICICI Bank", "Reliance Industries", "Infosys", "L&T")
+                topHoldings = listOf("HDFC Bank (9.2%)", "ICICI Bank (8.1%)", "Reliance Industries (7.8%)", "Infosys (5.9%)", "L&T (4.6%)"),
+                benchmark = "NIFTY 100 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "119062",
@@ -480,10 +539,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 56800.0,
                 return1Yr = 34.5,
                 return3Yr = 31.0,
+                return5Yr = 28.5,
                 equityPercent = 95.8,
                 debtPercent = 0.0,
                 cashPercent = 4.2,
-                topHoldings = listOf("Tube Investments", "HDFC Bank", "Apar Industries", "KPIT Tech", "Voltamp")
+                topHoldings = listOf("Tube Investments (4.2%)", "HDFC Bank (3.8%)", "Apar Industries (3.5%)", "KPIT Tech (3.1%)", "Voltamp Transformers (2.9%)"),
+                benchmark = "NIFTY Smallcap 250 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "120503",
@@ -497,10 +559,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 18900.0,
                 return1Yr = 22.4,
                 return3Yr = 17.1,
+                return5Yr = 16.0,
                 equityPercent = 99.8,
                 debtPercent = 0.0,
                 cashPercent = 0.2,
-                topHoldings = listOf("HDFC Bank", "Reliance Industries", "ICICI Bank", "Infosys", "TCS")
+                topHoldings = listOf("HDFC Bank (13.5%)", "Reliance Industries (10.2%)", "ICICI Bank (9.1%)", "Infosys (5.8%)", "TCS (4.3%)"),
+                benchmark = "NIFTY 50 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "120251",
@@ -514,10 +579,33 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 39400.0,
                 return1Yr = 24.8,
                 return3Yr = 19.4,
+                return5Yr = 17.8,
                 equityPercent = 68.5,
                 debtPercent = 24.5,
                 cashPercent = 7.0,
-                topHoldings = listOf("ICICI Bank", "NTPC", "Bharti Airtel", "GOI Sovereign Bonds", "RIL")
+                topHoldings = listOf("ICICI Bank (6.5%)", "NTPC (5.2%)", "Bharti Airtel (4.8%)", "GOI 7.26% 2033 G-Sec (8.2%)", "NABARD AAA (4.5%)"),
+                benchmark = "CRISIL Hybrid 35+65 Aggressive",
+                riskLevel = "High"
+            ),
+            MutualFundScheme(
+                code = "127042",
+                name = "Motilal Oswal Midcap Fund Direct-Growth",
+                fundHouse = "Motilal Oswal Mutual Fund",
+                category = "Mid Cap",
+                nav = 104.50,
+                navPrev = 103.80,
+                dayChangePercent = 0.67,
+                expenseRatio = 0.65,
+                aumCr = 19800.0,
+                return1Yr = 46.2,
+                return3Yr = 35.8,
+                return5Yr = 27.4,
+                equityPercent = 96.2,
+                debtPercent = 0.0,
+                cashPercent = 3.8,
+                topHoldings = listOf("Zomato Ltd (8.4%)", "Polycab India (7.6%)", "Persistent Systems (6.2%)", "Dixon Tech (5.5%)", "Trent Ltd (5.1%)"),
+                benchmark = "NIFTY Midcap 150 TRI",
+                riskLevel = "Very High"
             ),
             MutualFundScheme(
                 code = "101762",
@@ -531,10 +619,13 @@ class AxewatchRepository(private val db: AppDatabase) {
                 aumCr = 14300.0,
                 return1Yr = 7.6,
                 return3Yr = 6.8,
+                return5Yr = 7.1,
                 equityPercent = 0.0,
                 debtPercent = 92.4,
                 cashPercent = 7.6,
-                topHoldings = listOf("GOI 7.18% 2033", "NABARD AAA", "REC Limited", "PFC Limited", "HDFC Bank CD")
+                topHoldings = listOf("GOI 7.18% 2033 G-Sec (24.2%)", "NABARD AAA Bonds (14.5%)", "REC Ltd AAA (11.8%)", "PFC Ltd (9.2%)", "HDFC Bank CD (7.5%)"),
+                benchmark = "CRISIL Short Duration Debt",
+                riskLevel = "Low to Moderate"
             )
         )
         _mutualFunds.value = initialFunds
@@ -792,7 +883,7 @@ class AxewatchRepository(private val db: AppDatabase) {
         val masked = if (cleanPan.length >= 10) "${cleanPan.take(2)}*****${cleanPan.takeLast(1)}" else "***"
 
         // Execute real live query on MUFG Intime or KFintech
-        val queryResult = allotmentService.queryAllotment(cleanPan, ipo.symbol, ipo.companyName)
+        val queryResult = allotmentService.queryAllotment(cleanPan, ipo.symbol, ipo.companyName, ipo.status)
 
         val sharesAllotted = queryResult.sharesAllotted
         val sharesApplied = if (queryResult.sharesApplied > 0) queryResult.sharesApplied else ipo.lotSize

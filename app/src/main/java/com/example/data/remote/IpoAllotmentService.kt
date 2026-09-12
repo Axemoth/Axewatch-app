@@ -88,29 +88,65 @@ class IpoAllotmentService {
 
     /**
      * Check allotment across Link Intime (MUFG) or KFintech API based on company matching.
+     * Accurately distinguishes between:
+     * - "ALLOTTED": Application found with shares allotted > 0
+     * - "NOT_ALLOTTED": Application found in allotment lottery with 0 shares allotted
+     * - "NOT_APPLIED": Results declared by registrar, but no bid record found under this PAN
+     * - "RESULTS_NOT_OUT": Issue is active/forthcoming or registrar has not finalized basis of allotment yet
      */
     suspend fun queryAllotment(
         pan: String,
         ipoSymbol: String,
-        ipoCompanyName: String
+        ipoCompanyName: String,
+        ipoStatus: String = "Active"
     ): AllotmentQueryResult = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
 
-        // 1. Try MUFG Intime first if we find a matching company
+        // 1. If IPO status is Forthcoming or Active, allotment CANNOT be out yet
+        if (ipoStatus.equals("Forthcoming", ignoreCase = true)) {
+            return@withContext AllotmentQueryResult(
+                found = false,
+                source = "Registrar Schedule",
+                companyName = ipoCompanyName,
+                sharesApplied = 0,
+                sharesAllotted = 0,
+                status = "RESULTS_NOT_OUT",
+                applicationNo = "N/A",
+                applicantName = "",
+                note = "Results are not out yet. This IPO issue is forthcoming and bidding has not opened."
+            )
+        }
+
+        if (ipoStatus.equals("Active", ignoreCase = true)) {
+            return@withContext AllotmentQueryResult(
+                found = false,
+                source = "Registrar Schedule",
+                companyName = ipoCompanyName,
+                sharesApplied = 0,
+                sharesAllotted = 0,
+                status = "RESULTS_NOT_OUT",
+                applicationNo = "N/A",
+                applicantName = "",
+                note = "Results are not out yet. Bidding is currently open. Basis of allotment is declared after issue closure."
+            )
+        }
+
+        var registrarCompanyFound = false
+
+        // 2. Try MUFG Intime (Link Intime)
         try {
             val companies = fetchMufgCompanies()
             val matchedCompany = findBestCompanyMatch(ipoCompanyName, ipoSymbol, companies)
             if (matchedCompany != null) {
+                registrarCompanyFound = true
                 val mufgResult = checkMufgAllotment(cleanPan, matchedCompany.id, matchedCompany.name)
-                if (mufgResult.found) {
-                    return@withContext mufgResult
-                }
+                return@withContext mufgResult
             }
         } catch (e: Exception) {
             Log.w(TAG, "MUFG query exception: ${e.message}")
         }
 
-        // 2. Try KFintech API
+        // 3. Try KFintech API
         try {
             val kfinResult = checkKfinAllotment(cleanPan, ipoCompanyName)
             if (kfinResult.found) {
@@ -120,17 +156,32 @@ class IpoAllotmentService {
             Log.w(TAG, "KFintech query exception: ${e.message}")
         }
 
-        // 3. Fallback: Not allotted or no active record published yet
+        // 4. If neither registrar has published the company in their active database
+        if (!registrarCompanyFound) {
+            return@withContext AllotmentQueryResult(
+                found = false,
+                source = "Official Registrar",
+                companyName = ipoCompanyName,
+                sharesApplied = 0,
+                sharesAllotted = 0,
+                status = "RESULTS_NOT_OUT",
+                applicationNo = "N/A",
+                applicantName = "",
+                note = "Results are not out yet. The registrar has not finalized or uploaded the allotment basis for $ipoCompanyName."
+            )
+        }
+
+        // 5. Company results are published on registrar, but PAN not found -> NOT_APPLIED
         AllotmentQueryResult(
             found = false,
             source = "Registrar Query",
             companyName = ipoCompanyName,
             sharesApplied = 0,
             sharesAllotted = 0,
-            status = "NOT_ALLOTTED",
+            status = "NOT_APPLIED",
             applicationNo = "N/A",
             applicantName = "",
-            note = "No allotment record found for this PAN on registrar database."
+            note = "Not Applied: No application record found under PAN $cleanPan for $ipoCompanyName."
         )
     }
 
@@ -370,14 +421,14 @@ class IpoAllotmentService {
             .replace("sme", "")
     }
 
-    private fun notFoundResult(companyName: String, note: String): AllotmentQueryResult {
+    private fun notFoundResult(companyName: String, note: String, status: String = "NOT_APPLIED"): AllotmentQueryResult {
         return AllotmentQueryResult(
             found = false,
             source = "Registrar Query",
             companyName = companyName,
             sharesApplied = 0,
             sharesAllotted = 0,
-            status = "NOT_ALLOTTED",
+            status = status,
             applicationNo = "N/A",
             applicantName = "",
             note = note

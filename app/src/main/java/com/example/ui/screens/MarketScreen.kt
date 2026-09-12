@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
@@ -48,6 +49,8 @@ import com.example.data.model.FiiDiiFlow
 import com.example.data.model.MarketIndex
 import com.example.data.model.SectorHeatmapItem
 import com.example.data.model.StockQuote
+import com.example.data.provider.IndexConstituentsProvider
+import com.example.ui.dialogs.IndexDetailModal
 import com.example.ui.theme.AxeAmber
 import com.example.ui.theme.AxeBorder
 import com.example.ui.theme.AxeDarkBg
@@ -75,6 +78,7 @@ fun MarketScreen(
 ) {
     var stockFilterTab by remember { mutableIntStateOf(0) } // 0: All, 1: Gainers, 2: Losers, 3: Watchlist
     var searchQuery by remember { mutableStateOf("") }
+    var selectedIndexForModal by remember { mutableStateOf<MarketIndex?>(null) }
 
     val filteredStocks = remember(stocks, stockFilterTab, searchQuery, watchlistedSymbols) {
         val byTab = when (stockFilterTab) {
@@ -88,13 +92,19 @@ fun MarketScreen(
             byTab
         } else {
             val q = searchQuery.trim().lowercase()
-            byTab.filter {
-                it.symbol.lowercase().contains(q) ||
-                it.name.lowercase().contains(q) ||
-                it.sector.lowercase().contains(q)
+            if (q == "nifty 50" || q == "nifty") {
+                stocks
+            } else {
+                stocks.filter {
+                    it.symbol.lowercase().contains(q) ||
+                    it.name.lowercase().contains(q) ||
+                    it.sector.lowercase().contains(q)
+                }
             }
         }
     }
+
+    val quickSearchChips = listOf("NIFTY 50", "BANK", "TATA", "RELIANCE", "IT", "AUTO", "PHARMA", "ADANI")
 
     LazyColumn(
         modifier = modifier
@@ -102,24 +112,131 @@ fun MarketScreen(
             .background(AxeDarkBg),
         contentPadding = PaddingValues(bottom = 80.dp)
     ) {
+        // Section: Top Search Bar & Suggestions
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                // Search Input Box
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AxeDarkSurface)
+                        .border(1.dp, if (searchQuery.isNotEmpty()) AxePrimaryCyan else AxeBorder, RoundedCornerShape(12.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Search,
+                            contentDescription = "Search",
+                            tint = if (searchQuery.isNotEmpty()) AxePrimaryCyan else AxeTextMuted,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            textStyle = TextStyle(
+                                color = AxeTextPrimary,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Normal
+                            ),
+                            cursorBrush = SolidColor(AxePrimaryCyan),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("market_search_input"),
+                            decorationBox = { innerTextField ->
+                                if (searchQuery.isEmpty()) {
+                                    Text("Search stocks, companies, sectors (e.g. Tata, HDFC)...", color = AxeTextMuted, fontSize = 13.sp)
+                                }
+                                innerTextField()
+                            }
+                        )
+                        if (searchQuery.isNotEmpty()) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Clear search",
+                                tint = AxeTextSecondary,
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clickable { searchQuery = "" }
+                                    .padding(4.dp)
+                                    .testTag("clear_search_btn")
+                            )
+                        }
+                    }
+                }
+
+                // Quick Discovery Search Chips
+                Spacer(modifier = Modifier.height(8.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(quickSearchChips) { chip ->
+                        val isSelected = searchQuery.equals(chip, ignoreCase = true)
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (isSelected) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
+                                .border(1.dp, if (isSelected) AxePrimaryCyan else AxeBorder, RoundedCornerShape(6.dp))
+                                .clickable {
+                                    searchQuery = if (isSelected) "" else chip
+                                }
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = chip,
+                                color = if (isSelected) AxePrimaryCyan else AxeTextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // Section: Market Indices
         item {
-            Column(modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)) {
-                Text(
-                    text = "KEY INDICES",
-                    color = AxeTextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
-                )
+            Column(modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "KEY INDICES",
+                        color = AxeTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "Tap to view constituents",
+                        color = AxePrimaryCyan,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
 
                 LazyRow(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(indices) { index ->
-                        IndexCard(index = index)
+                        IndexCard(
+                            index = index,
+                            onClick = { selectedIndexForModal = index }
+                        )
                     }
                 }
             }
@@ -289,62 +406,9 @@ fun MarketScreen(
             }
         }
 
-        // Section: Stocks & Movers Header + Tabs + Search
+        // Section: Stocks & Movers Header + Tabs
         item {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
-                // Search Input Box
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AxeDarkSurface)
-                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search",
-                            tint = AxeTextMuted,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            textStyle = TextStyle(
-                                color = AxeTextPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Normal
-                            ),
-                            cursorBrush = SolidColor(AxePrimaryCyan),
-                            modifier = Modifier.weight(1f),
-                            decorationBox = { innerTextField ->
-                                if (searchQuery.isEmpty()) {
-                                    Text("Search stocks by symbol, company, or sector...", color = AxeTextMuted, fontSize = 13.sp)
-                                }
-                                innerTextField()
-                            }
-                        )
-                        if (searchQuery.isNotEmpty()) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = "Clear search",
-                                tint = AxeTextMuted,
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clickable { searchQuery = "" }
-                                    .padding(4.dp)
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
                 // Mobile-friendly header: Title Row
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -352,50 +416,65 @@ fun MarketScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "MARKET MOVERS",
+                        text = if (searchQuery.isNotBlank()) "SEARCH RESULTS" else "MARKET MOVERS",
                         color = AxeTextSecondary,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
                     )
-                    Text(
-                        text = "${filteredStocks.size} stocks",
-                        color = AxePrimaryCyan,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (searchQuery.isNotBlank()) {
+                            Text(
+                                text = "Clear",
+                                color = AxeRoseRed,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier
+                                    .clickable { searchQuery = "" }
+                                    .padding(end = 8.dp)
+                            )
+                        }
+                        Text(
+                            text = "${filteredStocks.size} stocks",
+                            color = AxePrimaryCyan,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
+                if (searchQuery.isBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                // Dedicated Segmented Filter Bar optimized for phones
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AxeDarkSurfaceElevated)
-                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                        .padding(3.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    val tabs = listOf("All", "Gainers", "Losers", "Watchlist")
-                    tabs.forEachIndexed { idx, label ->
-                        val selected = stockFilterTab == idx
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(38.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (selected) AxePrimaryCyan.copy(alpha = 0.18f) else Color.Transparent)
-                                .clickable { stockFilterTab = idx },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = label,
-                                color = if (selected) AxePrimaryCyan else AxeTextSecondary,
-                                fontSize = 12.sp,
-                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
-                            )
+                    // Dedicated Segmented Filter Bar optimized for phones
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(AxeDarkSurfaceElevated)
+                            .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                            .padding(3.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        val tabs = listOf("All", "Gainers", "Losers", "Watchlist")
+                        tabs.forEachIndexed { idx, label ->
+                            val selected = stockFilterTab == idx
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(38.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (selected) AxePrimaryCyan.copy(alpha = 0.18f) else Color.Transparent)
+                                    .clickable { stockFilterTab = idx },
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (selected) AxePrimaryCyan else AxeTextSecondary,
+                                    fontSize = 12.sp,
+                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                )
+                            }
                         }
                     }
                 }
@@ -430,20 +509,43 @@ fun MarketScreen(
             )
         }
     }
+
+    // Index Detail Modal showing all constituent stocks when an index is clicked
+    selectedIndexForModal?.let { idx ->
+        val constituents = remember(idx.symbol) {
+            IndexConstituentsProvider.getConstituentsForIndex(idx.symbol)
+        }
+        IndexDetailModal(
+            index = idx,
+            constituents = constituents,
+            onStockClick = { stockQuote ->
+                selectedIndexForModal = null
+                onStockClick(stockQuote)
+            },
+            onDismiss = {
+                selectedIndexForModal = null
+            }
+        )
+    }
 }
 
 @Composable
-private fun IndexCard(index: MarketIndex) {
+private fun IndexCard(
+    index: MarketIndex,
+    onClick: () -> Unit
+) {
     val isBull = index.isPositive
     val accentColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
 
     Box(
         modifier = Modifier
-            .width(170.dp)
+            .width(185.dp)
             .clip(RoundedCornerShape(12.dp))
             .background(AxeDarkSurface)
             .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+            .clickable { onClick() }
             .padding(12.dp)
+            .testTag("index_card_${index.symbol}")
     ) {
         Column {
             Row(
@@ -457,6 +559,23 @@ private fun IndexCard(index: MarketIndex) {
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Bold
                 )
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(AxePrimaryCyan.copy(alpha = 0.12f))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Stocks", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.width(2.dp))
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = AxePrimaryCyan,
+                            modifier = Modifier.size(9.dp)
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(4.dp))
@@ -487,10 +606,17 @@ private fun IndexCard(index: MarketIndex) {
 
             if (index.advances > 0 || index.declines > 0) {
                 Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Adv: ${index.advances}", color = AxeEmeraldGreen, fontSize = 9.sp)
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Dec: ${index.declines}", color = AxeRoseRed, fontSize = 9.sp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Adv: ${index.advances}", color = AxeEmeraldGreen, fontSize = 9.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Dec: ${index.declines}", color = AxeRoseRed, fontSize = 9.sp)
+                    }
+                    Text("Tap to view", color = AxeTextMuted, fontSize = 9.sp)
                 }
             }
         }

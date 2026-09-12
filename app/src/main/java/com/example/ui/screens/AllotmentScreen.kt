@@ -104,7 +104,20 @@ fun AllotmentScreen(
     var showManualRecordDialog by remember { mutableStateOf(false) }
     var showConfirmClearDialog by remember { mutableStateOf(false) }
 
+    var recordFilterTab by remember { mutableStateOf(0) }
+    var ipoSearchQuery by remember { mutableStateOf("") }
+
     val currentIpo = ipos.find { it.symbol == selectedIpoSymbol } ?: ipos.firstOrNull()
+
+    val filteredRecords = remember(records, recordFilterTab) {
+        when (recordFilterTab) {
+            1 -> records.filter { it.status == "ALLOTTED" }
+            2 -> records.filter { it.status == "NOT_ALLOTTED" }
+            3 -> records.filter { it.status == "NOT_APPLIED" }
+            4 -> records.filter { it.status == "RESULTS_NOT_OUT" || it.status == "AWAITING" }
+            else -> records
+        }
+    }
 
     LazyColumn(
         modifier = modifier
@@ -503,33 +516,63 @@ fun AllotmentScreen(
 
         // Recent Allotment Check Records Header & Clear Action
         item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "RECENT ALLOTMENT RESULTS (${records.size})",
-                    color = AxeTextMuted,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
-                if (records.isNotEmpty()) {
+            Column {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Text(
-                        text = "Clear History",
-                        color = AxeRoseRed,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        modifier = Modifier.clickable { showConfirmClearDialog = true }
+                        text = "RECENT ALLOTMENT RESULTS (${records.size})",
+                        color = AxeTextMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
                     )
+                    if (records.isNotEmpty()) {
+                        Text(
+                            text = "Clear History",
+                            color = AxeRoseRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.clickable { showConfirmClearDialog = true }
+                        )
+                    }
+                }
+
+                if (records.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        val tabs = listOf("All", "Allotted", "Not Allotted", "Not Applied", "Results Pending")
+                        items(tabs.indices.toList()) { idx ->
+                            val isSel = recordFilterTab == idx
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
+                                    .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(6.dp))
+                                    .clickable { recordFilterTab = idx }
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = tabs[idx],
+                                    color = if (isSel) AxePrimaryCyan else AxeTextSecondary,
+                                    fontSize = 11.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        if (records.isEmpty()) {
+        if (filteredRecords.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -537,13 +580,23 @@ fun AllotmentScreen(
                         .padding(vertical = 24.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("No allotment queries checked yet. Pick an IPO and tap Check.", color = AxeTextMuted, fontSize = 12.sp)
+                    Text(
+                        text = if (records.isEmpty()) "No allotment queries checked yet. Pick an IPO and tap Check." else "No records matching this filter.",
+                        color = AxeTextMuted,
+                        fontSize = 12.sp
+                    )
                 }
             }
         } else {
-            items(records, key = { it.id }) { record ->
-                val isAllotted = record.status == "ALLOTTED"
+            items(filteredRecords, key = { it.id }) { record ->
                 val time = SimpleDateFormat("dd MMM, HH:mm", Locale.ENGLISH).format(Date(record.checkedAt))
+                val (badgeBg, badgeColor, badgeLabel) = when (record.status) {
+                    "ALLOTTED" -> Triple(AxeGreenSubtle, AxeEmeraldGreen, "ALLOTTED (${record.sharesAllotted} sh)")
+                    "NOT_ALLOTTED" -> Triple(AxeRedSubtle, AxeRoseRed, "NOT ALLOTTED")
+                    "NOT_APPLIED" -> Triple(AxeDarkSurfaceElevated, AxeTextSecondary, "NOT APPLIED")
+                    "RESULTS_NOT_OUT", "AWAITING" -> Triple(AxeAmber.copy(alpha = 0.18f), AxeAmber, "RESULTS NOT OUT")
+                    else -> Triple(AxeDarkSurfaceElevated, AxeTextSecondary, record.status)
+                }
 
                 Box(
                     modifier = Modifier
@@ -572,13 +625,13 @@ fun AllotmentScreen(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isAllotted) AxeGreenSubtle else AxeRedSubtle)
+                                    .background(badgeBg)
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = if (isAllotted) "ALLOTTED (${record.sharesAllotted} sh)" else "NOT ALLOTTED",
-                                    color = if (isAllotted) AxeEmeraldGreen else AxeRoseRed,
-                                    fontSize = 11.sp,
+                                    text = badgeLabel,
+                                    color = badgeColor,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
@@ -597,6 +650,17 @@ fun AllotmentScreen(
 
     // Modal: IPO Issue Selector
     if (showIpoPickerModal) {
+        val filteredIpos = remember(ipos, ipoSearchQuery) {
+            if (ipoSearchQuery.isBlank()) ipos else {
+                val q = ipoSearchQuery.trim().lowercase()
+                ipos.filter {
+                    it.companyName.lowercase().contains(q) ||
+                    it.symbol.lowercase().contains(q) ||
+                    it.registrar.lowercase().contains(q)
+                }
+            }
+        }
+
         AlertDialog(
             onDismissRequest = { showIpoPickerModal = false },
             containerColor = AxeDarkSurface,
@@ -604,51 +668,71 @@ fun AllotmentScreen(
                 Text("Select IPO Issue", color = AxeTextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             },
             text = {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.height(320.dp)
-                ) {
-                    items(ipos) { ipo ->
-                        val isSel = ipo.symbol == selectedIpoSymbol
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.15f) else AxeDarkSurfaceElevated)
-                                .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(8.dp))
-                                .clickable {
-                                    selectedIpoSymbol = ipo.symbol
-                                    showIpoPickerModal = false
-                                }
-                                .padding(10.dp)
-                        ) {
-                            Column {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(ipo.companyName, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                    Box(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(4.dp))
-                                            .background(if (ipo.status == "Active") AxeGreenSubtle else AxeDarkSurface)
-                                            .padding(horizontal = 6.dp, vertical = 2.dp)
-                                    ) {
-                                        Text(ipo.status, color = if (ipo.status == "Active") AxeEmeraldGreen else AxeTextMuted, fontSize = 9.sp)
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = ipoSearchQuery,
+                        onValueChange = { ipoSearchQuery = it },
+                        placeholder = { Text("Search by name, symbol, registrar...", color = AxeTextMuted, fontSize = 12.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AxeDarkSurfaceElevated,
+                            unfocusedContainerColor = AxeDarkSurfaceElevated,
+                            focusedBorderColor = AxePrimaryCyan,
+                            unfocusedBorderColor = AxeBorder,
+                            focusedTextColor = AxeTextPrimary,
+                            unfocusedTextColor = AxeTextPrimary
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 10.dp)
+                    )
+
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.height(300.dp)
+                    ) {
+                        items(filteredIpos) { ipo ->
+                            val isSel = ipo.symbol == selectedIpoSymbol
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.15f) else AxeDarkSurfaceElevated)
+                                    .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(8.dp))
+                                    .clickable {
+                                        selectedIpoSymbol = ipo.symbol
+                                        showIpoPickerModal = false
                                     }
+                                    .padding(10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(ipo.companyName, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(if (ipo.status == "Active") AxeGreenSubtle else AxeDarkSurface)
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(ipo.status, color = if (ipo.status == "Active") AxeEmeraldGreen else AxeTextMuted, fontSize = 9.sp)
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(2.dp))
+                                    Text(
+                                        text = "Registrar: ${ipo.registrar} · Issue Price: ₹${ipo.issuePrice.toInt()} · Lot: ${ipo.lotSize} sh",
+                                        color = AxeTextSecondary,
+                                        fontSize = 11.sp
+                                    )
+                                    Text(
+                                        text = "Total Sub: ${ipo.totalSub}x · Close: ${ipo.issueCloseDate}",
+                                        color = AxeTextMuted,
+                                        fontSize = 10.sp
+                                    )
                                 }
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "Registrar: ${ipo.registrar} · Issue Price: ₹${ipo.issuePrice.toInt()} · Lot: ${ipo.lotSize} sh",
-                                    color = AxeTextSecondary,
-                                    fontSize = 11.sp
-                                )
-                                Text(
-                                    text = "Total Sub: ${ipo.totalSub}x · Close: ${ipo.issueCloseDate}",
-                                    color = AxeTextMuted,
-                                    fontSize = 10.sp
-                                )
                             }
                         }
                     }
@@ -695,22 +779,44 @@ fun AllotmentScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(
-                            selected = mStatus == "ALLOTTED",
-                            onClick = { mStatus = "ALLOTTED" },
-                            colors = RadioButtonDefaults.colors(selectedColor = AxeEmeraldGreen)
-                        )
-                        Text("Allotted", color = AxeTextPrimary, fontSize = 12.sp)
+                    // Status Options (All 4 distinct states)
+                    Text("Allotment Status:", color = AxeTextSecondary, fontSize = 11.sp)
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = mStatus == "ALLOTTED",
+                                onClick = { mStatus = "ALLOTTED" },
+                                colors = RadioButtonDefaults.colors(selectedColor = AxeEmeraldGreen)
+                            )
+                            Text("Allotted", color = AxeTextPrimary, fontSize = 12.sp)
 
-                        Spacer(modifier = Modifier.width(16.dp))
+                            Spacer(modifier = Modifier.width(16.dp))
 
-                        RadioButton(
-                            selected = mStatus == "NOT_ALLOTTED",
-                            onClick = { mStatus = "NOT_ALLOTTED" },
-                            colors = RadioButtonDefaults.colors(selectedColor = AxeRoseRed)
-                        )
-                        Text("Not Allotted", color = AxeTextPrimary, fontSize = 12.sp)
+                            RadioButton(
+                                selected = mStatus == "NOT_ALLOTTED",
+                                onClick = { mStatus = "NOT_ALLOTTED" },
+                                colors = RadioButtonDefaults.colors(selectedColor = AxeRoseRed)
+                            )
+                            Text("Not Allotted", color = AxeTextPrimary, fontSize = 12.sp)
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(
+                                selected = mStatus == "NOT_APPLIED",
+                                onClick = { mStatus = "NOT_APPLIED" },
+                                colors = RadioButtonDefaults.colors(selectedColor = AxeTextSecondary)
+                            )
+                            Text("Not Applied", color = AxeTextPrimary, fontSize = 12.sp)
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            RadioButton(
+                                selected = mStatus == "RESULTS_NOT_OUT",
+                                onClick = { mStatus = "RESULTS_NOT_OUT" },
+                                colors = RadioButtonDefaults.colors(selectedColor = AxeAmber)
+                            )
+                            Text("Results Not Out Yet", color = AxeTextPrimary, fontSize = 12.sp)
+                        }
                     }
 
                     if (mStatus == "ALLOTTED") {

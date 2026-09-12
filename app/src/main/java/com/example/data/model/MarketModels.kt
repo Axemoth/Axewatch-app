@@ -70,3 +70,34 @@ data class FiiDiiFlow(
     val diiGrossSell: Double,
     val diiNet: Double
 )
+
+data class IndexConstituent(
+    val symbol: String,
+    val name: String,
+    val sector: String,
+    val weightPercent: Double,
+    val lastPrice: Double,
+    val change: Double,
+    val percentChange: Double,
+    val dayHigh: Double = lastPrice * 1.015,
+    val dayLow: Double = lastPrice * 0.985,
+    val volume: String = "3.2M",
+    val isPositive: Boolean = percentChange >= 0
+) {
+    fun toStockQuote(): StockQuote = StockQuote(
+        symbol = symbol,
+        name = name,
+        lastPrice = lastPrice,
+        change = change,
+        percentChange = percentChange,
+        dayHigh = dayHigh,
+        dayLow = dayLow,
+        volume = volume,
+        sector = sector,
+        week52High = lastPrice * 1.24,
+        week52Low = lastPrice * 0.76,
+        peRatio = 22.8,
+        marketCapCr = (weightPercent * 145000.0).coerceAtLeast(45000.0),
+        isPositive = isPositive
+    )
+}
