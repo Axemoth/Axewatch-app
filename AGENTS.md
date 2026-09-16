@@ -27,6 +27,10 @@ plausible constants.
 History of removed fabrications (do not reintroduce):
 - Hardcoded index quotes, IPO subscription multiples, GMP figures labeled
   "Today, Live", past-listing gains, MF NAVs/returns, FII/DII crore figures.
+- GMP-page derivations: fixed subs (3.4/2.8/2.1) for unmatched Active IPOs,
+  SHNI/BHNI as fixed fractions of NII, formula lot sizes, hashed issue
+  sizes, keyword-guessed registrars ("energy"→Bigshare). Unknowns stay
+  0/"Unknown" until the registrar directory enriches them.
 - Fake "LIVE PULSE" news ticker (now derived from live FII/DII + NIFTY only).
 - "58.4% accuracy / +340bps / v2.4 Live Out-of-Sample" model claims.
 - `dayReturn = pnl * 0.08`, `dayReturnPercent = 0.65`, `xirrPercent = 14.8`.
@@ -37,6 +41,12 @@ History of removed fabrications (do not reintroduce):
 
 ## 2. Allotment engine (`data/remote/IpoAllotmentService.kt`)
 
+- **Registrar directory** (`data/remote/RegistrarDirectory.kt`, ports the web
+  backend's `registrar_directory()`): MUFG live API + Bigshare dropdowns
+  (3 mirrors) are authoritative; ipomarket.in + IPOWatch allotment tables
+  fill KFintech/SME registrars and backfill declared allotment dates.
+  Cached 24h in memory; outages are never cached. Issues are enriched at
+  refresh (`registrar` + `allotmentDate` on `IpoIssue`).
 - **Automated**: MUFG Intime (`SearchOnPan` + AES-token flow, cookie-warmed
   session via `JavaNetCookieJar` — REQUIRED, calls without it misbehave) and
   KFintech (`?type=pan`, PAN in `reqparam` **header**, empty `client_id`
@@ -51,6 +61,12 @@ History of removed fabrications (do not reintroduce):
   (lowercase, `&`→`and`, strip corp suffixes + glued status words). Matching
   needs exact-canon or a **≥10-char** substring (`ipoNamesMatch`,
   `findBestCompanyMatch`) — short names (ARCIL, MANIKAPLA) must never collide.
+- **Declared beats lagging status**: a directory allotment date (or Closed/
+  Listed status) forces the registrars to be queried even when the tracker
+  still shows "Active" — the `allotmentDeclared` bypass.
+- **Tolerant share counts**: `parseShareCount` handles ints, "1,234"
+  strings, and decimals (org.json `optInt` returns 0 for string forms and
+  once dropped real allotments); same tolerance in the MUFG XML parser.
 - **MUFG dropdown rotates**: live list + remembered company IDs merge into
   append-only SharedPreferences memory so past IPOs stay checkable.
 - **Budget**: 1.5s MUFG / 2s KFin pacing, one retry on transport blips only,
@@ -71,7 +87,10 @@ History of removed fabrications (do not reintroduce):
   FII/DII via `FiiDiiService` (NSE bot wall; empty on failure).
 - Seeds are **empty/zeroed** until live data lands; offline = empty states.
 - Trade ideas: on-device rule engine (`TechnicalAnalysisEngine`) over real
-  Yahoo bars, triggered from the Signals tab (`scanIdeas`, 6h cache). No
+  Yahoo bars. The Signals tab **auto-runs once (cached)** on entry
+  (`autoScanIdeas`, skips when results exist or a scan ran within the 6h
+  TTL); the manual Run button always forces. Live `(scanned, total)`
+  progress + disabled states while running. No
   on-device training exists → `QuantModelReportCard.validated = false` and
   the UI gates every metric on it.
 - XIRR/day-return are `null` until measurable (no dated cashflows / prev-close
@@ -81,8 +100,14 @@ History of removed fabrications (do not reintroduce):
   throttled 50-quote refresh (Yahoo 429 risk) — a future work item, not a
   quick edit. Do not present those prices as live; do not "fix" by inventing
   fresher numbers.
+- **Allotment UX rules**: picker sections are Results declared → Open now →
+  Upcoming, recent-first (`ipoSection`/`ipoRecencyKey`/`parseLooseDate`,
+  all unit-tested); default selection is the most recent declared issue;
+  Check button shows a spinner and disables while busy; LOOKUP_FAILED rows
+  carry a one-tap retry resolved via the vault (records alone never
+  re-identify a PAN).
 
-## 4. Build & test (verified 2026-09-16: APK + 24/24 tests green)
+## 4. Build & test (verified: APK + 40/40 tests green)
 
 - Toolchain: JDK 17 + Gradle 9.3.1 + SDK `platforms;android-36` +
   `build-tools;36.0.0`. Set `JAVA_HOME`, `ANDROID_HOME`/`ANDROID_SDK_ROOT`.

@@ -99,6 +99,20 @@ class IpoAllotmentService {
             val long = if (na.length < nb.length) nb else na
             return short.length >= 10 && long.contains(short)
         }
+
+        /**
+         * Registrar share counts arrive as ints, "1,234" strings, or
+         * "150.0" decimals depending on registrar and row. org.json optInt
+         * returns 0 for all string forms — which silently dropped real
+         * allotments (records skipped as "no shares"). Mirrors the web
+         * backend's _num(). Pure function, unit-tested.
+         */
+        fun parseShareCount(v: Any?): Int {
+            if (v is Number) return v.toInt()
+            val s = v?.toString()?.replace(",", "")?.trim() ?: return 0
+            if (s.isEmpty() || s.equals("null", ignoreCase = true)) return 0
+            return s.toIntOrNull() ?: s.toDoubleOrNull()?.toInt() ?: 0
+        }
     }
 
     // CookieJar is REQUIRED: MUFG's token endpoint validates the session that
@@ -122,6 +136,8 @@ class IpoAllotmentService {
     }
 
     private var cachedMufgCompanies: List<MufgCompany> = emptyList()
+    private var cachedMufgCompaniesAt = 0L
+    private val mufgCompaniesTtlMs = 3600_000L
 
     /**
      * Fetch the list of active companies on MUFG Intime (Link Intime).
@@ -129,7 +145,11 @@ class IpoAllotmentService {
      * validates the session, and calls without it silently misbehave.
      */
     suspend fun fetchMufgCompanies(): List<MufgCompany> = withContext(Dispatchers.IO) {
-        if (cachedMufgCompanies.isNotEmpty()) return@withContext cachedMufgCompanies
+        if (cachedMufgCompanies.isNotEmpty() &&
+            System.currentTimeMillis() - cachedMufgCompaniesAt < mufgCompaniesTtlMs
+        ) {
+            return@withContext cachedMufgCompanies
+        }
 
         try {
             pace("allot_mufg", 1500)
@@ -154,6 +174,7 @@ class IpoAllotmentService {
 
             val companies = parseMufgCompaniesXml(xmlData)
             cachedMufgCompanies = companies
+            cachedMufgCompaniesAt = System.currentTimeMillis()
             companies
         } catch (e: Exception) {
             Log.w(TAG, "Failed to fetch MUFG company list: ${e.message}")
@@ -174,12 +195,17 @@ class IpoAllotmentService {
         ipoSymbol: String,
         ipoCompanyName: String,
         ipoStatus: String = "Active",
-        rememberedMufgIds: Map<String, Pair<String, String>> = emptyMap()
+        rememberedMufgIds: Map<String, Pair<String, String>> = emptyMap(),
+        // True when the registrar directory carries a declared allotment
+        // date for this issue. Tracker statuses lag reality (an issue can
+        // show "Active" after its basis is out) — a declared date always
+        // wins and the registrars get queried.
+        allotmentDeclared: Boolean = false
     ): AllotmentQueryResult = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
 
         // 1. If IPO status is Forthcoming or Active, allotment CANNOT be out yet
-        if (ipoStatus.equals("Forthcoming", ignoreCase = true)) {
+        if (ipoStatus.equals("Forthcoming", ignoreCase = true) && !allotmentDeclared) {
             return@withContext AllotmentQueryResult(
                 found = false,
                 source = "Registrar Schedule",
@@ -193,7 +219,7 @@ class IpoAllotmentService {
             )
         }
 
-        if (ipoStatus.equals("Active", ignoreCase = true)) {
+        if (ipoStatus.equals("Active", ignoreCase = true) && !allotmentDeclared) {
             return@withContext AllotmentQueryResult(
                 found = false,
                 source = "Registrar Schedule",
@@ -298,7 +324,8 @@ class IpoAllotmentService {
             status = "NOT_APPLIED",
             applicationNo = "N/A",
             applicantName = "",
-            note = "Not Applied: No application record found under PAN $cleanPan for $ipoCompanyName."
+            // Masked: the full PAN must never appear in stored or displayed text.
+            note = "Not Applied: No application record found under PAN ${maskPan(cleanPan)} for $ipoCompanyName."
         )
     }
 
@@ -399,7 +426,11 @@ class IpoAllotmentService {
                 val body = response.body?.string()
                     ?: throw AllotmentTransportException("KFintech empty response")
                 val root = try {
-                    if (body.trim().startsWith("[")) JSONArray(body) else JSONObject(body).optJSONArray("data") ?: JSONArray()
+                    val t = body.trim()
+                    if (t.startsWith("[")) JSONArray(t)
+                    else JSONObject(t).optJSONArray("data")
+                        ?: JSONObject(t).optJSONArray("records")
+                        ?: JSONArray()
                 } catch (e: Exception) {
                     throw AllotmentTransportException("KFintech bad payload")
                 }
@@ -412,8 +443,14 @@ class IpoAllotmentService {
                     val item = root.optJSONObject(i) ?: continue
                     val comp = item.optString("Company", item.optString("company", ""))
                     if (!ipoNamesMatch(comp, requestedCompanyName)) continue
-                    val appShares = item.optInt("App_Shares", item.optInt("app_shares", 0))
-                    val allShares = item.optInt("All_Shares", item.optInt("all_shares", 0))
+                    val appShares = parseShareCount(
+                        if (item.has("App_Shares")) item.get("App_Shares")
+                        else if (item.has("app_shares")) item.get("app_shares") else 0
+                    )
+                    val allShares = parseShareCount(
+                        if (item.has("All_Shares")) item.get("All_Shares")
+                        else if (item.has("all_shares")) item.get("all_shares") else 0
+                    )
                     if (appShares <= 0 && allShares <= 0) continue
                     matchedApplied += appShares
                     matchedAllotted += allShares
@@ -526,9 +563,16 @@ class IpoAllotmentService {
                     }
                     XmlPullParser.TEXT -> {
                         val text = parser.text.trim()
+                        // Counts may arrive comma-formatted: tolerant parse
+                        // (same reason as KFin parseShareCount).
+                        fun tolerantCount(raw: String, prev: Int): Int =
+                            raw.toIntOrNull()
+                                ?: raw.replace(",", "").toIntOrNull()
+                                ?: raw.replace(",", "").toDoubleOrNull()?.toInt()
+                                ?: prev
                         when (currentTag.uppercase()) {
-                            "SHARES" -> applied = text.toIntOrNull() ?: applied
-                            "ALLOT" -> allotted = text.toIntOrNull() ?: allotted
+                            "SHARES" -> applied = tolerantCount(text, applied)
+                            "ALLOT" -> allotted = tolerantCount(text, allotted)
                             "PEMNDG" -> appNo = text
                             "NAME1" -> applicantName = text
                             "MSG" -> errorMsg = text

@@ -28,7 +28,9 @@ import com.aistudio.axewatch.trader.data.model.TradeIdea
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
 import com.aistudio.axewatch.trader.data.provider.IndexConstituentsProvider
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
+import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
 import com.aistudio.axewatch.trader.data.remote.FiiDiiService
+import com.aistudio.axewatch.trader.data.remote.RegistrarDirectory
 import com.aistudio.axewatch.trader.data.remote.IpoGmpService
 import com.aistudio.axewatch.trader.data.remote.MutualFundService
 import com.aistudio.axewatch.trader.data.remote.NewsSentimentService
@@ -123,10 +125,110 @@ class AxewatchRepository(
     }
 
     data class RegistrarAttribution(
-        val registrar: String, // "MUFG Intime" | "Bigshare" | "KFintech?" | "Unknown"
+        val registrar: String, // display name, or "Unknown"
         val dropdownName: String?,
-        val automated: Boolean
+        val automated: Boolean,
+        val allotmentDate: String = ""
     )
+
+    // ---- Registrar directory (ports the web backend's registrar_directory)
+    // MUFG live API + Bigshare public dropdowns are authoritative. The
+    // ipomarket.in + IPOWatch allotment tables fill the rest — notably
+    // KFintech and the smaller SME registrars (no company lists of their
+    // own) — and backfill declared allotment dates. Without this, KFin/SME
+    // issues attributed "Unknown" and declared results were missed when the
+    // tracker status still read "Active".
+    private var regDirCache: Pair<Long, Map<String, DirectoryEntry>> = 0L to emptyMap()
+    private val regDirTtlMs = 24 * 3600_000L
+
+    private fun lookupDirectory(
+        dir: Map<String, DirectoryEntry>,
+        issueName: String,
+        symbol: String
+    ): DirectoryEntry? {
+        val wantName = issueName.ifBlank { symbol }
+        val want = IpoAllotmentService.canonIpoName(wantName)
+        if (want.isEmpty()) return null
+        dir[want]?.let { return it }
+        for ((_, e) in dir) {
+            if (IpoAllotmentService.ipoNamesMatch(e.name, wantName)) return e
+        }
+        return null
+    }
+
+    suspend fun registrarDirectory(force: Boolean = false): Map<String, DirectoryEntry> =
+        withContext(Dispatchers.IO) {
+            val (ts, cached) = regDirCache
+            if (!force && cached.isNotEmpty() && System.currentTimeMillis() - ts < regDirTtlMs) {
+                return@withContext cached
+            }
+            val dir = mutableMapOf<String, DirectoryEntry>()
+            val canon = { n: String -> IpoAllotmentService.canonIpoName(n) }
+            var okSources = 0
+            // 1. MUFG live company list (authoritative) + remembered IDs
+            // (SearchOnPan keeps answering rotated-off IDs).
+            try {
+                val live = allotmentService.fetchMufgCompanies()
+                rememberIds("mufg_ids", live.map { it.id to it.name })
+                for (c in live) {
+                    val k = canon(c.name)
+                    if (k.isNotEmpty()) dir[k] = DirectoryEntry("mufg", c.name, authoritative = true)
+                }
+                if (live.isNotEmpty()) okSources++
+            } catch (_: Exception) {
+            }
+            for ((k, v) in readIdMemory("mufg_ids")) {
+                if (k !in dir) dir[k] = DirectoryEntry("mufg", v.name, authoritative = true)
+            }
+            // 2. Bigshare public dropdowns, all mirrors (authoritative).
+            try {
+                for ((_, name) in bigshareDirectory()) {
+                    val k = canon(name)
+                    if (k.isNotEmpty() && k !in dir) {
+                        dir[k] = DirectoryEntry("bigshare", name, authoritative = true)
+                    }
+                }
+                okSources++
+            } catch (_: Exception) {
+            }
+            for ((k, v) in readIdMemory("bigshare_ids")) {
+                if (k !in dir) dir[k] = DirectoryEntry("bigshare", v.name, authoritative = true)
+            }
+            // 3. ipomarket.in allotment tables (KFin/SME + dates).
+            try {
+                delay(1000)
+                val html = RegistrarDirectory.fetchText(RegistrarDirectory.IPOMARKET_URL)
+                RegistrarDirectory.mergeInto(dir, RegistrarDirectory.parseIpomarket(html), canon)
+                okSources++
+            } catch (_: Exception) {
+            }
+            // 4. IPOWatch allotment tables (independent second source).
+            try {
+                delay(1000)
+                val html = RegistrarDirectory.fetchText(RegistrarDirectory.IPOWATCH_ALLOT_URL)
+                RegistrarDirectory.mergeInto(dir, RegistrarDirectory.parseIpowatch(html), canon)
+                okSources++
+            } catch (_: Exception) {
+            }
+            recordAllotSource("allot_regdir", okSources > 0, 0)
+            // Never cache an outage as a 24h blind spot (mirrors backend).
+            if (dir.isNotEmpty()) regDirCache = System.currentTimeMillis() to dir
+            dir
+        }
+
+    private fun enrichIpos(
+        dir: Map<String, DirectoryEntry>,
+        issues: List<IpoIssue>
+    ): List<IpoIssue> {
+        if (dir.isEmpty() || issues.isEmpty()) return issues
+        return issues.map { issue ->
+            val hit = lookupDirectory(dir, issue.companyName, issue.symbol) ?: return@map issue
+            issue.copy(
+                registrar = hit.displayName(),
+                allotmentDate = issue.allotmentDate.ifBlank { hit.allotmentDate }
+            )
+        }
+    }
 
     /** Bigshare's captcha guards only SEARCH — company dropdowns are public. */
     private var bigshareDirCache: Pair<Long, List<Pair<String, String>>> = 0L to emptyList()
@@ -139,25 +241,15 @@ class AxewatchRepository(
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
             .build()
-        for (base in listOf("https://ipo.bigshareonline.com", "https://ipo1.bigshareonline.com", "https://ipo2.bigshareonline.com")) {
+        for (base in RegistrarDirectory.BIGSHARE_URLS.map { it.removeSuffix("/ipo_status.html") }) {
             try {
                 kotlinx.coroutines.delay(1000)
                 val req = okhttp3.Request.Builder().url("$base/ipo_status.html")
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").get().build()
+                    .header("User-Agent", RegistrarDirectory.USER_AGENT).get().build()
                 val resp = client.newCall(req).execute()
                 if (!resp.isSuccessful) continue
                 val html = resp.body?.string() ?: continue
-                val sel = Regex("<select[^>]*id=\"ddlCompany\"[^>]*>(.*?)</select>",
-                    setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-                    .find(html)?.groupValues?.getOrNull(1) ?: html
-                val opts = Regex("<option[^>]*value=\"([^\"]*)\"[^>]*>([^<]{2,100})</option>").findAll(sel)
-                for (m in opts) {
-                    val v = m.groupValues[1].trim()
-                    val n = m.groupValues[2].trim()
-                    if (v.isNotEmpty() && v != "0" && n.isNotEmpty() && !n.contains("select", true)) {
-                        out.add(v to n)
-                    }
-                }
+                out.addAll(RegistrarDirectory.parseBigshareOptions(html))
             } catch (_: Exception) {
             }
         }
@@ -169,38 +261,17 @@ class AxewatchRepository(
 
     suspend fun attributeRegistrar(issueName: String, symbol: String): RegistrarAttribution =
         withContext(Dispatchers.IO) {
-            // 1/2. Live MUFG list, then remembered IDs.
-            try {
-                val live = allotmentService.fetchMufgCompanies()
-                rememberIds("mufg_ids", live.map { it.id to it.name })
-                val want = IpoAllotmentService.canonIpoName(issueName.ifBlank { symbol })
-                val hit = live.firstOrNull {
-                    IpoAllotmentService.canonIpoName(it.name) == want
-                } ?: live.firstOrNull {
-                    val c = IpoAllotmentService.canonIpoName(it.name)
-                    c.length >= 10 && (c.contains(want) || (want.length >= 10 && want.contains(c)))
-                }
-                if (hit != null) return@withContext RegistrarAttribution("MUFG Intime", hit.name, true)
+            val dir = try {
+                registrarDirectory()
             } catch (_: Exception) {
+                emptyMap()
             }
-            val wantMem = IpoAllotmentService.canonIpoName(issueName.ifBlank { symbol })
-            readIdMemory("mufg_ids")[wantMem]?.let {
-                return@withContext RegistrarAttribution("MUFG Intime", it.name, true)
+            val hit = lookupDirectory(dir, issueName, symbol)
+            if (hit != null) {
+                RegistrarAttribution(hit.displayName(), hit.name, hit.automated(), hit.allotmentDate)
+            } else {
+                RegistrarAttribution("Unknown", null, true, "")
             }
-            // 3/4. Bigshare live directory, then remembered IDs.
-            try {
-                for ((_, name) in bigshareDirectory()) {
-                    if (IpoAllotmentService.ipoNamesMatch(name, issueName.ifBlank { symbol })) {
-                        return@withContext RegistrarAttribution("Bigshare", name, false)
-                    }
-                }
-            } catch (_: Exception) {
-            }
-            val wantBs = IpoAllotmentService.canonIpoName(issueName.ifBlank { symbol })
-            readIdMemory("bigshare_ids")[wantBs]?.let {
-                return@withContext RegistrarAttribution("Bigshare", it.name, false)
-            }
-            RegistrarAttribution("Unknown", null, true)
         }
 
     // ---- Measured source health (never hardcoded OPERATIONAL) ----
@@ -231,6 +302,7 @@ class AxewatchRepository(
         _registrarHealth.value = listOf(
             entry("allot_mufg", "MUFG Intime"),
             entry("allot_kfin", "KFintech"),
+            entry("allot_regdir", "Registrar Directory"),
             RegistrarSourceHealth("bigshare", "Bigshare", "CAPTCHA_HANDOFF", 0, "Manual captcha required. 1-tap browser handoff"),
             RegistrarSourceHealth("bse", "BSE India", "CAPTCHA_HANDOFF", 0, "Manual captcha + bot wall. Use the manual link"),
             RegistrarSourceHealth("nse", "NSE India", "CAPTCHA_HANDOFF", 0, "Manual verification + bot wall. Use the manual link")
@@ -277,6 +349,13 @@ class AxewatchRepository(
     private val tradeScanTtlMs = 6 * 3600_000L
     private val _tradeScanRunning = MutableStateFlow(false)
     val tradeScanRunning: Flow<Boolean> = _tradeScanRunning.asStateFlow()
+    // (scanned, total) progress for the scan progress bar. Resets at start.
+    private val _tradeScanProgress = MutableStateFlow(0 to 0)
+    val tradeScanProgress: Flow<Pair<Int, Int>> = _tradeScanProgress.asStateFlow()
+
+    /** True when a scan ran within the TTL (even an empty one) — the UI
+     *  auto-run uses this so entering the tab doesn't rescan every time. */
+    fun tradeScanFresh(): Boolean = System.currentTimeMillis() - tradeScanAt < tradeScanTtlMs
 
     suspend fun scanTradeIdeas(force: Boolean = false): List<TradeIdea> = withContext(Dispatchers.IO) {
         if (!force && System.currentTimeMillis() - tradeScanAt < tradeScanTtlMs && _tradeIdeas.value.isNotEmpty()) {
@@ -302,8 +381,12 @@ class AxewatchRepository(
             val equity = cash + posValue
             val niftyChg = _indices.value.find { it.symbol == "NIFTY 50" }?.percentChange ?: 0.0
             val out = mutableListOf<TradeIdea>()
+            _tradeScanProgress.value = 0 to universe.size
             for ((i, c) in universe.withIndex()) {
                 if (i > 0) delay(400)
+                // Top-of-loop update: `continue` paths below skip the
+                // bottom update, so progress never stalls on skips.
+                _tradeScanProgress.value = i to universe.size
                 try {
                     val bars = yahooService.fetchCandles(c.symbol, "1y")
                     if (bars.size < 60) continue
@@ -327,6 +410,7 @@ class AxewatchRepository(
                     )
                 } catch (_: Exception) {
                 }
+                _tradeScanProgress.value = (i + 1) to universe.size
             }
             out.sortByDescending { abs(it.score) }
             _tradeIdeas.value = out
@@ -426,6 +510,16 @@ class AxewatchRepository(
     suspend fun refreshMarket() = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
 
+        // Registrar directory refreshes concurrently with quotes: IPO
+        // enrichment below awaits it. 24h-cached, usually a no-op.
+        val dirDeferred = async {
+            try {
+                registrarDirectory()
+            } catch (_: Exception) {
+                emptyMap()
+            }
+        }
+
         // 1. Fetch real stock quotes from Yahoo Finance concurrently
         val currentStocks = _stocks.value.toMutableList()
         var yahooSuccessCount = 0
@@ -514,7 +608,8 @@ class AxewatchRepository(
         try {
             val (liveIpos, liveGmps) = gmpService.fetchLiveGmpData()
             if (liveIpos.isNotEmpty()) {
-                _ipos.value = liveIpos
+                // Directory-backed registrar + declared allotment dates.
+                _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
             }
             if (liveGmps.isNotEmpty()) {
                 _gmpItems.value = liveGmps
@@ -644,10 +739,16 @@ class AxewatchRepository(
 
         // Remembered MUFG IDs let checks hit issues that rotated off the
         // live dropdown. Health flows from the service callback per attempt.
+        // A declared allotment date (directory) beats a lagging "Active"
+        // tracker status — the registrars get queried either way.
         val remembered = readIdMemory("mufg_ids")
             .mapValues { (_, v) -> v.id to v.name }
+        val declared = ipo.allotmentDate.isNotBlank() ||
+            ipo.status.equals("Closed", ignoreCase = true) ||
+            ipo.status.equals("Listed", ignoreCase = true) ||
+            ipo.status.equals("Allotted", ignoreCase = true)
         val queryResult = allotmentService.queryAllotment(
-            cleanPan, ipo.symbol, ipo.companyName, ipo.status, remembered
+            cleanPan, ipo.symbol, ipo.companyName, ipo.status, remembered, declared
         )
 
         val sharesAllotted = queryResult.sharesAllotted

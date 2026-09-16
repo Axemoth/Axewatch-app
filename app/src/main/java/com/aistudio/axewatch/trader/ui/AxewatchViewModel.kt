@@ -276,6 +276,21 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    val tradeScanRunning: StateFlow<Boolean> = repository.tradeScanRunning.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), false
+    )
+    val tradeScanProgress: StateFlow<Pair<Int, Int>> = repository.tradeScanProgress.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), 0 to 0
+    )
+
+    /** Automatic first run when entering the Signals tab: cached results
+     *  (or a fresh-but-empty scan) short-circuit, so this never hammers
+     *  Yahoo — unlike the manual Run button, which always forces. */
+    fun autoScanIdeas() {
+        if (tradeIdeas.value.isNotEmpty() || repository.tradeScanFresh()) return
+        scanIdeas(force = false)
+    }
+
     // Toast / Snack message channel
     private val _toastMessage = MutableSharedFlow<String>()
     val toastMessage: SharedFlow<String> = _toastMessage.asSharedFlow()
@@ -352,6 +367,11 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     }
 
     // PAN Vault & Allotment
+    // Busy flag drives the Check button spinner: registrar lookups take
+    // seconds, and double-taps used to fire duplicate throttled calls.
+    private val _allotBusy = MutableStateFlow(false)
+    val allotBusy: StateFlow<Boolean> = _allotBusy.asStateFlow()
+
     fun savePan(pan: String, holderName: String, relation: String) {
         viewModelScope.launch {
             val ok = repository.savePan(pan, holderName, relation)
@@ -371,12 +391,14 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     fun checkAllotment(pan: String, ipoSymbol: String, holderName: String = "Self") {
         viewModelScope.launch {
-            val record = try {
-                repository.checkIpoAllotment(pan, ipoSymbol, holderName)
-            } catch (e: IllegalArgumentException) {
-                _toastMessage.emit("Invalid PAN format — use AAAAA9999A")
-                return@launch
-            }
+            _allotBusy.value = true
+            try {
+                val record = try {
+                    repository.checkIpoAllotment(pan, ipoSymbol, holderName)
+                } catch (e: IllegalArgumentException) {
+                    _toastMessage.emit("Invalid PAN format — use AAAAA9999A")
+                    return@launch
+                }
             // Status-distinct toasts: a dead network must never read as
             // "Not Allotted", and silence from the registrar is not a verdict.
             _toastMessage.emit(
@@ -389,12 +411,29 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     else -> "Status for ${record.ipoSymbol}: ${record.status}"
                 }
             )
+            } finally {
+                _allotBusy.value = false
+            }
         }
+    }
+
+    /** Re-run a stored record's check (e.g. retry LOOKUP_FAILED). The full
+     *  PAN is resolved from the vault by its masked form — records alone
+     *  can never re-identify it. */
+    fun retryAllotment(record: AllotmentRecordEntity) {
+        val vault = savedPans.value.find { it.maskedPan == record.maskedPan }
+        if (vault == null) {
+            emitMessage("That PAN is no longer in the vault — re-check from the form above")
+            return
+        }
+        checkAllotment(vault.panNumber, record.ipoSymbol, vault.holderName)
     }
 
     fun checkBulkAllotment(ipoSymbol: String) {
         viewModelScope.launch {
-            val records = repository.checkBulkAllotment(ipoSymbol)
+            _allotBusy.value = true
+            try {
+                val records = repository.checkBulkAllotment(ipoSymbol)
             val msg = if (records.isEmpty()) {
                 "No saved PANs in Vault to check"
             } else {
@@ -407,6 +446,9 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     "${by["LOOKUP_FAILED"] ?: 0} unreachable"
             }
             _toastMessage.emit(msg)
+            } finally {
+                _allotBusy.value = false
+            }
         }
     }
 

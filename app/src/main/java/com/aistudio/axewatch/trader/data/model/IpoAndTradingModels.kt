@@ -20,8 +20,68 @@ data class IpoIssue(
     val totalSub: Double = 0.0,
     val gmpAmount: Double = 0.0,
     val gmpPercent: Double = 0.0,
-    val estListingPrice: Double = 0.0
+    val estListingPrice: Double = 0.0,
+    // Basis-of-allotment declaration date from the registrar directory
+    // (ipomarket/IPOWatch tables), e.g. "18 Sep 2026". Blank = unknown.
+    // Drives the "Results declared" section and recent-first ordering.
+    val allotmentDate: String = ""
 )
+
+/** Section rank for the allotment picker: declared results first. */
+fun ipoSection(issue: IpoIssue): Int {
+    if (issue.allotmentDate.isNotBlank()) return 0
+    return when (issue.status.lowercase()) {
+        "closed", "listed", "allotted" -> 0
+        "active", "open" -> 1
+        "forthcoming", "upcoming" -> 2
+        else -> 3
+    }
+}
+
+private val LOOSE_MONTHS = mapOf(
+    "jan" to 1, "feb" to 2, "mar" to 3, "apr" to 4, "may" to 5, "jun" to 6,
+    "jul" to 7, "aug" to 8, "sep" to 9, "sept" to 9, "oct" to 10, "nov" to 11, "dec" to 12
+)
+
+/**
+ * Best-effort date key (yyyyMMdd) from loose tracker strings:
+ * "18 Sep 2026", "18 Sept", "2026-09-18", "18-09-2026". Missing year =
+ * current year. Unparseable = 0 (sorts last). Pure function, unit-tested.
+ */
+fun parseLooseDate(text: String, nowYear: Int = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)): Long {
+    val t = text.trim()
+    if (t.isEmpty() || t == "—" || t.equals("-", ignoreCase = true)) return 0
+    var m = Regex("(\\d{4})-(\\d{1,2})-(\\d{1,2})").find(t)
+    if (m != null) {
+        val (y, mo, d) = m.destructured
+        return y.toLong() * 10000 + mo.toLong() * 100 + d.toLong()
+    }
+    m = Regex("(\\d{1,2})[./-](\\d{1,2})[./-](\\d{2,4})").find(t)
+    if (m != null) {
+        var (d, mo, y) = m.destructured
+        val year = if (y.length == 2) 2000 + y.toLong() else y.toLong()
+        return year * 10000 + mo.toLong() * 100 + d.toLong()
+    }
+    val monthHit = LOOSE_MONTHS.entries.firstOrNull { (k, _) -> k in t.lowercase() }
+    // First plausible day-of-month (a bare year like "Sep 2026" has none).
+    val day = Regex("\\d{1,4}").findAll(t)
+        .mapNotNull { it.value.toLongOrNull() }
+        .firstOrNull { it in 1..31 }
+    if (monthHit != null && day != null) {
+        val year = Regex("(19|20)\\d{2}").find(t)?.value?.toLongOrNull() ?: nowYear.toLong()
+        return year * 10000 + monthHit.value * 100 + day
+    }
+    return 0
+}
+
+/** Recency key for recent-first ordering: allotment date, else close, else open. */
+fun ipoRecencyKey(issue: IpoIssue): Long {
+    return parseLooseDate(issue.allotmentDate)
+        .takeIf { it > 0 }
+        ?: parseLooseDate(issue.issueCloseDate)
+            .takeIf { it > 0 }
+        ?: parseLooseDate(issue.issueOpenDate)
+}
 
 data class GmpItem(
     val companyName: String,

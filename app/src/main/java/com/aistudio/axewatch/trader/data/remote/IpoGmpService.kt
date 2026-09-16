@@ -78,8 +78,11 @@ class IpoGmpService {
             Log.w(TAG, "Error fetching live GMP from IPOWatch: ${e.message}")
         }
 
-        // Return verified realistic real-market data
-        Pair(getSeedIpos(), getSeedGmps())
+        // Live fetch failed: return empty, never stale demo data. The old
+        // getSeedIpos()/getSeedGmps()/getSeedPastListings() served invented
+        // September-2026 figures (subs, GMPs labeled "Today, Live", listing
+        // gains) as if live. Empty renders as unavailable.
+        Pair(emptyList(), emptyList())
     }
 
     /**
@@ -96,7 +99,8 @@ class IpoGmpService {
             Log.w(TAG, "Error fetching past listings from IPOWatch: ${e.message}")
         }
 
-        getSeedPastListings()
+        // Live fetch failed: empty, never demo seeds (see above).
+        emptyList()
     }
 
     private fun fetchFromIpowatchGmp(): Pair<List<IpoIssue>, List<GmpItem>> {
@@ -161,17 +165,27 @@ class IpoGmpService {
                 val symbol = generateSymbol(cleanName)
                 val isSme = category == "SME" || cleanName.contains("SME", ignoreCase = true)
 
-                // Check live subscription map
-                val matchedSub = findSubscription(cleanName, subMap)
-                val qib = matchedSub?.qib ?: if (mappedStatus == "Active") 3.4 else 0.0
-                val nii = matchedSub?.nii ?: if (mappedStatus == "Active") 2.8 else 0.0
-                val rii = matchedSub?.retail ?: if (mappedStatus == "Active") 2.1 else 0.0
-                val total = matchedSub?.total ?: if (mappedStatus == "Active") ((qib * 0.5) + (nii * 0.15) + (rii * 0.35)).roundToOneDecimal() else 0.0
-                val finalCloseDate = if (matchedSub?.closeDate?.isNotBlank() == true) matchedSub.closeDate else closeDate
+        // Subscription figures come ONLY from the live sub-table. The old
+        // code invented qib=3.4/nii=2.8/rii=2.1 for Active IPOs with no
+        // match, and derived SHNI/BHNI as fixed fractions of NII — fake
+        // precision on investment-driving numbers. Zero renders as "—".
+        // (Real SHNI/BHNI splits come from NSE bidDetails, unavailable here.)
+        val matchedSub = findSubscription(cleanName, subMap)
+        val qib = matchedSub?.qib ?: 0.0
+        val nii = matchedSub?.nii ?: 0.0
+        val rii = matchedSub?.retail ?: 0.0
+        val total = matchedSub?.total ?: 0.0
+        val finalCloseDate = if (matchedSub?.closeDate?.isNotBlank() == true) matchedSub.closeDate else closeDate
 
-                val lotSize = calculateLotSize(issuePrice, isSme)
-                val issueSizeCr = estimateIssueSize(issuePrice, isSme)
-                val registrar = estimateRegistrar(cleanName)
+        // Lot size / issue size / registrar are UNKNOWN from the GMP page.
+        // Old code derived lot size from price by formula, hashed a fake
+        // issue size, and keyword-guessed the registrar ("energy"→Bigshare)
+        // — the guessed registrar then misrouted allotment checks. The
+        // registrar directory enriches these after fetch; until then they
+        // render as unknown, never as invented facts.
+        val lotSize = 0
+        val issueSizeCr = 0.0
+        val registrar = "Unknown"
 
                 val priceBand = if (issuePrice > 0) {
                     val lowerBand = (issuePrice * 0.95).toInt()
@@ -194,8 +208,8 @@ class IpoGmpService {
                     registrar = registrar,
                     qibSub = qib,
                     niiSub = nii,
-                    shniSub = (nii * 0.85).roundToOneDecimal(),
-                    bhniSub = (nii * 1.15).roundToOneDecimal(),
+                    shniSub = 0.0,
+                    bhniSub = 0.0,
                     riiSub = rii,
                     totalSub = total,
                     gmpAmount = gmpAmount,
@@ -425,7 +439,7 @@ class IpoGmpService {
     private fun parseDates(rawDates: String): Pair<String, String> {
         val clean = rawDates.trim()
         if (clean.isBlank() || clean.equals("-", ignoreCase = true)) {
-            return Pair("Current", "Current")
+            return Pair("—", "—")
         }
         val parts = clean.split("-")
         return if (parts.size >= 2) {
@@ -447,31 +461,15 @@ class IpoGmpService {
         }
     }
 
-    private fun calculateLotSize(price: Double, isSme: Boolean): Int {
-        if (price <= 0.0) return if (isSme) 1200 else 35
-        return if (isSme) {
-            max(100, (120000.0 / price).roundToInt())
-        } else {
-            max(1, (14800.0 / price).roundToInt())
-        }
-    }
 
-    private fun estimateIssueSize(price: Double, isSme: Boolean): Double {
-        return if (isSme) {
-            45.0 + ((price * 0.4).roundToInt() % 35)
-        } else {
-            1200.0 + ((price * 4.2).roundToInt() % 2500)
-        }
-    }
 
-    private fun estimateRegistrar(name: String): String {
-        val l = name.lowercase()
-        return when {
-            l.contains("sme") || l.contains("energy") -> "Bigshare Services Pvt Ltd"
-            l.contains("tech") || l.contains("motors") || l.contains("nse") -> "MUFG Intime (Link Intime)"
-            else -> "KFin Technologies Ltd"
-        }
-    }
+
+    // REMOVED (audit): calculateLotSize / estimateIssueSize derived lot
+    // size from price by formula, hashed a fake issue size, and
+    // keyword-guessed the registrar — the guessed registrar then
+    // misrouted allotment checks. Unknowns stay 0/"Unknown" until the
+    // registrar directory enriches them. Demo seed tables removed too:
+    // fetch failures now return empty (unavailable), never stale data.
 
     private fun generateSymbol(name: String): String {
         return name.uppercase()
@@ -492,9 +490,13 @@ class IpoGmpService {
 
     private fun findSubscription(companyName: String, subMap: Map<String, LiveSubInfo>): LiveSubInfo? {
         val norm = normalizeKey(companyName)
+        if (norm.isEmpty()) return null
         subMap[norm]?.let { return it }
+        // Guarded substring fallback (≥10 shared chars): unguarded
+        // contains() collides ("Hero Motors" vs "Motors"), attributing one
+        // IPO's live subscription to another.
         for ((k, v) in subMap) {
-            if (norm.contains(k) || k.contains(norm)) {
+            if (k.length >= 10 && norm.length >= 10 && (norm.contains(k) || k.contains(norm))) {
                 return v
             }
         }
@@ -505,206 +507,4 @@ class IpoGmpService {
         return (this * 10.0).roundToInt() / 10.0
     }
 
-    // Accurate real-market initial seed datasets
-    private fun getSeedIpos(): List<IpoIssue> = listOf(
-        IpoIssue(
-            symbol = "NSE",
-            companyName = "NSE (National Stock Exchange)",
-            category = "Mainboard",
-            status = "Forthcoming",
-            issueOpenDate = "17 Sept",
-            issueCloseDate = "21 Sept",
-            priceBand = "₹1,700 - ₹1,785",
-            issuePrice = 1785.0,
-            lotSize = 8,
-            issueSizeCr = 10500.0,
-            registrar = "MUFG Intime (Link Intime)",
-            qibSub = 0.0,
-            niiSub = 0.0,
-            shniSub = 0.0,
-            bhniSub = 0.0,
-            riiSub = 0.0,
-            totalSub = 0.0,
-            gmpAmount = 200.0,
-            gmpPercent = 11.2,
-            estListingPrice = 1985.0
-        ),
-        IpoIssue(
-            symbol = "HEROMOTOR",
-            companyName = "Hero Motors Ltd",
-            category = "Mainboard",
-            status = "Forthcoming",
-            issueOpenDate = "16 Sept",
-            issueCloseDate = "18 Sept",
-            priceBand = "₹80 - ₹84",
-            issuePrice = 84.0,
-            lotSize = 175,
-            issueSizeCr = 900.0,
-            registrar = "KFin Technologies Ltd",
-            qibSub = 0.0,
-            niiSub = 0.0,
-            shniSub = 0.0,
-            bhniSub = 0.0,
-            riiSub = 0.0,
-            totalSub = 0.0,
-            gmpAmount = 8.0,
-            gmpPercent = 9.5,
-            estListingPrice = 92.0
-        ),
-        IpoIssue(
-            symbol = "SSRETAIL",
-            companyName = "SS Retail Ltd",
-            category = "Mainboard",
-            status = "Forthcoming",
-            issueOpenDate = "16 Sept",
-            issueCloseDate = "18 Sept",
-            priceBand = "₹405 - ₹424",
-            issuePrice = 424.0,
-            lotSize = 35,
-            issueSizeCr = 650.0,
-            registrar = "MUFG Intime (Link Intime)",
-            qibSub = 0.0,
-            niiSub = 0.0,
-            shniSub = 0.0,
-            bhniSub = 0.0,
-            riiSub = 0.0,
-            totalSub = 0.0,
-            gmpAmount = 30.0,
-            gmpPercent = 7.1,
-            estListingPrice = 454.0
-        ),
-        IpoIssue(
-            symbol = "JINDALSUP",
-            companyName = "Jindal Supreme Ltd",
-            category = "Mainboard",
-            status = "Forthcoming",
-            issueOpenDate = "16 Sept",
-            issueCloseDate = "18 Sept",
-            priceBand = "₹88 - ₹93",
-            issuePrice = 93.0,
-            lotSize = 160,
-            issueSizeCr = 420.0,
-            registrar = "Bigshare Services Pvt Ltd",
-            qibSub = 0.0,
-            niiSub = 0.0,
-            shniSub = 0.0,
-            bhniSub = 0.0,
-            riiSub = 0.0,
-            totalSub = 0.0,
-            gmpAmount = 13.0,
-            gmpPercent = 14.0,
-            estListingPrice = 106.0
-        ),
-        IpoIssue(
-            symbol = "MANIKAPLA",
-            companyName = "Manika Plastech Ltd",
-            category = "Mainboard",
-            status = "Active",
-            issueOpenDate = "11 Sept",
-            issueCloseDate = "16 Sept",
-            priceBand = "₹41 - ₹43",
-            issuePrice = 43.0,
-            lotSize = 345,
-            issueSizeCr = 185.0,
-            registrar = "MUFG Intime (Link Intime)",
-            qibSub = 0.36,
-            niiSub = 1.26,
-            shniSub = 1.05,
-            bhniSub = 1.42,
-            riiSub = 2.24,
-            totalSub = 1.49,
-            gmpAmount = 13.0,
-            gmpPercent = 30.2,
-            estListingPrice = 56.0
-        ),
-        IpoIssue(
-            symbol = "VEEGALAND",
-            companyName = "Veegaland Developers",
-            category = "Mainboard",
-            status = "Active",
-            issueOpenDate = "10 Sept",
-            issueCloseDate = "15 Sept",
-            priceBand = "₹133 - ₹140",
-            issuePrice = 140.0,
-            lotSize = 105,
-            issueSizeCr = 320.0,
-            registrar = "KFin Technologies Ltd",
-            qibSub = 0.49,
-            niiSub = 1.01,
-            shniSub = 0.88,
-            bhniSub = 1.15,
-            riiSub = 1.78,
-            totalSub = 1.25,
-            gmpAmount = 24.0,
-            gmpPercent = 17.1,
-            estListingPrice = 164.0
-        ),
-        IpoIssue(
-            symbol = "INJECTOPOL",
-            companyName = "Injecto Polymers Ltd",
-            category = "SME",
-            status = "Active",
-            issueOpenDate = "11 Sept",
-            issueCloseDate = "16 Sept",
-            priceBand = "₹95 - ₹100",
-            issuePrice = 100.0,
-            lotSize = 1200,
-            issueSizeCr = 38.0,
-            registrar = "Bigshare Services Pvt Ltd",
-            qibSub = 1.02,
-            niiSub = 0.08,
-            shniSub = 0.06,
-            bhniSub = 0.10,
-            riiSub = 0.26,
-            totalSub = 0.29,
-            gmpAmount = 25.0,
-            gmpPercent = 25.0,
-            estListingPrice = 125.0
-        ),
-        IpoIssue(
-            symbol = "AXIOMGAS",
-            companyName = "Axiom Gas Engineering",
-            category = "SME",
-            status = "Forthcoming",
-            issueOpenDate = "18 Sept",
-            issueCloseDate = "22 Sept",
-            priceBand = "₹50 - ₹53",
-            issuePrice = 53.0,
-            lotSize = 2000,
-            issueSizeCr = 49.8,
-            registrar = "Bigshare Services Pvt Ltd",
-            qibSub = 0.0,
-            niiSub = 0.0,
-            shniSub = 0.0,
-            bhniSub = 0.0,
-            riiSub = 0.0,
-            totalSub = 0.0,
-            gmpAmount = 12.0,
-            gmpPercent = 22.6,
-            estListingPrice = 65.0
-        )
-    )
-
-    private fun getSeedGmps(): List<GmpItem> = listOf(
-        GmpItem("NSE (National Stock Exchange)", "NSE", 1785.0, 200.0, 11.2, 1985.0, "Upcoming", 3, "Today, Live"),
-        GmpItem("Manika Plastech Ltd", "MANIKAPLA", 43.0, 13.0, 30.2, 56.0, "Open", 4, "Today, Live"),
-        GmpItem("Injecto Polymers Ltd", "INJECTOPOL", 100.0, 25.0, 25.0, 125.0, "Open", 4, "Today, Live"),
-        GmpItem("Veegaland Developers", "VEEGALAND", 140.0, 24.0, 17.1, 164.0, "Open", 3, "Today, Live"),
-        GmpItem("Axiom Gas Engineering", "AXIOMGAS", 53.0, 12.0, 22.6, 65.0, "Upcoming", 3, "Today, Live"),
-        GmpItem("Hero Motors Ltd", "HEROMOTOR", 84.0, 8.0, 9.5, 92.0, "Upcoming", 2, "Today, Live"),
-        GmpItem("Jindal Supreme Ltd", "JINDALSUP", 93.0, 13.0, 14.0, 106.0, "Upcoming", 3, "Today, Live"),
-        GmpItem("SS Retail Ltd", "SSRETAIL", 424.0, 30.0, 7.1, 454.0, "Upcoming", 2, "Today, Live")
-    )
-
-    private fun getSeedPastListings(): List<PastIpoItem> = listOf(
-        PastIpoItem("AUGMONT", "Augmont Enterprises Ltd", 788.0, 961.0, 995.0, 21.9, 44.5, "Sep 2026"),
-        PastIpoItem("TEMPSENS", "Tempsens Instruments Ltd", 300.0, 634.0, 650.0, 111.3, 89.2, "Sep 2026"),
-        PastIpoItem("GAJA", "Gaja Alternative Ltd", 160.0, 185.0, 192.0, 15.6, 18.4, "Sep 2026"),
-        PastIpoItem("SHANKESH", "Shankesh Jewellers Ltd", 93.0, 103.3, 108.0, 11.1, 12.5, "Sep 2026"),
-        PastIpoItem("SUNSHINE", "Sunshine Pictures Ltd", 360.0, 395.9, 410.0, 10.0, 9.8, "Sep 2026"),
-        PastIpoItem("LALITHAA", "Lalithaa Jewellery Mart", 201.0, 265.0, 274.0, 31.8, 38.6, "Aug 2026"),
-        PastIpoItem("WAAREE", "Waaree Energies Ltd", 1503.0, 2550.0, 2890.0, 69.7, 76.3, "Listed"),
-        PastIpoItem("PREMIER", "Premier Energies Ltd", 450.0, 991.0, 1140.0, 120.2, 74.3, "Listed"),
-        PastIpoItem("BAJAJHFL", "Bajaj Housing Finance", 70.0, 150.0, 132.0, 114.3, 67.4, "Listed")
-    )
 }

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -46,6 +47,7 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -64,6 +66,8 @@ import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
 import com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity
 import com.aistudio.axewatch.trader.data.model.IpoIssue
+import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
+import com.aistudio.axewatch.trader.data.model.ipoSection
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
@@ -92,6 +96,8 @@ fun AllotmentScreen(
     registrarLinks: List<RegistrarLink> = emptyList(),
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit,
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
+    onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
+    checkBusy: Boolean = false,
     onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String) -> Unit = { _, _, _, _, _ -> },
     onSavePan: (pan: String, name: String, rel: String) -> Unit,
     onDeletePan: (PanVaultEntity) -> Unit,
@@ -100,7 +106,18 @@ fun AllotmentScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedIpoSymbol by remember { mutableStateOf(ipos.firstOrNull()?.symbol ?: "") }
+    var selectedIpoSymbol by remember { mutableStateOf("") }
+    // Smart default: most recent results-declared issue first, then most
+    // recent closed, then whatever leads the feed. Re-evaluates as the
+    // issue list loads — the old firstOrNull() froze on the first frame
+    // (usually empty) and never recovered.
+    LaunchedEffect(ipos) {
+        if (ipos.none { it.symbol == selectedIpoSymbol }) {
+            selectedIpoSymbol = ipos
+                .sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
+                .firstOrNull()?.symbol ?: ""
+        }
+    }
     var panInput by remember { mutableStateOf("") }
     var panVisible by remember { mutableStateOf(false) }
     var holderInput by remember { mutableStateOf("") }
@@ -195,7 +212,12 @@ fun AllotmentScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Registrar: ${currentIpo?.registrar ?: "Unknown"} · Lot: ${currentIpo?.lotSize ?: 0} sh · Price: ₹${currentIpo?.issuePrice?.toInt() ?: 0}",
+                                    text = buildString {
+                                        append("Registrar: ${currentIpo?.registrar ?: "Unknown"}")
+                                        if ((currentIpo?.lotSize ?: 0) > 0) append(" · Lot: ${currentIpo?.lotSize} sh")
+                                        append(" · Price: ₹${currentIpo?.issuePrice?.toInt() ?: 0}")
+                                        if (!currentIpo?.allotmentDate.isNullOrBlank()) append(" · Allotment: ${currentIpo?.allotmentDate}")
+                                    },
                                     color = AxePrimaryCyan,
                                     fontSize = 11.sp
                                 )
@@ -298,7 +320,7 @@ fun AllotmentScreen(
                                 onCheckAllotment(panInput, currentIpo.symbol, holderInput.ifBlank { "Applicant" })
                             }
                         },
-                        enabled = panInput.isNotBlank(),
+                        enabled = panInput.isNotBlank() && !checkBusy,
                         colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
@@ -306,9 +328,19 @@ fun AllotmentScreen(
                             .height(46.dp)
                             .testTag("check_allotment_button")
                     ) {
-                        Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF00363F), modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Check Allotment Status", color = Color(0xFF00363F), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        if (checkBusy) {
+                            CircularProgressIndicator(
+                                color = Color(0xFF00363F),
+                                strokeWidth = 2.dp,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Checking Registrar…", color = Color(0xFF00363F), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        } else {
+                            Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF00363F), modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Check Allotment Status", color = Color(0xFF00363F), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
                     }
 
                     // Secondary Bulk Check & Manual Logger Actions
@@ -665,6 +697,17 @@ fun AllotmentScreen(
                                     fontWeight = FontWeight.Bold
                                 )
                             }
+                            // One-tap retry for transport failures: resolves
+                            // the vault PAN by its masked form, so records
+                            // alone can never re-identify it.
+                            if (record.status == "LOOKUP_FAILED") {
+                                IconButton(
+                                    onClick = { onRetryRecord(record) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(Icons.Default.Refresh, contentDescription = "Retry lookup", tint = AxeAmber, modifier = Modifier.size(18.dp))
+                                }
+                            }
                             IconButton(
                                 onClick = { onDeleteRecord(record) },
                                 modifier = Modifier.size(48.dp)
@@ -689,6 +732,22 @@ fun AllotmentScreen(
                     it.registrar.lowercase().contains(q)
                 }
             }
+        }
+        // Sections, recent first: declared results on top (that's what most
+        // checks target), then open issues, then upcoming.
+        val pickerSections = remember(filteredIpos) {
+            filteredIpos
+                .sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
+                .groupBy { ipoSection(it) }
+                .toSortedMap()
+                .mapKeys { (section, _) ->
+                    when (section) {
+                        0 -> "RESULTS DECLARED"
+                        1 -> "OPEN NOW"
+                        2 -> "UPCOMING"
+                        else -> "OTHERS"
+                    }
+                }.toList()
         }
 
         AlertDialog(
@@ -717,11 +776,27 @@ fun AllotmentScreen(
                             .padding(bottom = 10.dp)
                     )
 
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.height(300.dp)
-                    ) {
-                        items(filteredIpos) { ipo ->
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.height(300.dp)
+                        ) {
+                            if (pickerSections.isEmpty()) {
+                                item {
+                                    Text(
+                                        "No issues match. Pull to refresh on the Market tab for the latest list.",
+                                        color = AxeTextMuted, fontSize = 12.sp
+                                    )
+                                }
+                            }
+                            pickerSections.forEach { (title, issues) ->
+                                item(key = "hdr_$title") {
+                                    Text(
+                                        title, color = AxeTextSecondary, fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    )
+                                }
+                                items(issues, key = { "ipo_${it.symbol}" }) { ipo ->
                             val isSel = ipo.symbol == selectedIpoSymbol
                             Box(
                                 modifier = Modifier
@@ -753,17 +828,27 @@ fun AllotmentScreen(
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))
                                     Text(
-                                        text = "Registrar: ${ipo.registrar} · Issue Price: ₹${ipo.issuePrice.toInt()} · Lot: ${ipo.lotSize} sh",
+                                        text = buildString {
+                                            append("Registrar: ${ipo.registrar}")
+                                            append(" · ₹${ipo.issuePrice.toInt()}")
+                                            if (ipo.lotSize > 0) append(" · Lot: ${ipo.lotSize} sh")
+                                            if (ipo.allotmentDate.isNotBlank()) append(" · Allotment: ${ipo.allotmentDate}")
+                                        },
                                         color = AxeTextSecondary,
                                         fontSize = 11.sp
                                     )
                                     Text(
-                                        text = "Total Sub: ${ipo.totalSub}x · Close: ${ipo.issueCloseDate}",
+                                        text = if (ipo.totalSub > 0) {
+                                            "Total Sub: ${ipo.totalSub}x · Close: ${ipo.issueCloseDate}"
+                                        } else {
+                                            "Close: ${ipo.issueCloseDate}"
+                                        },
                                         color = AxeTextMuted,
                                         fontSize = 10.sp
                                     )
                                 }
                             }
+                        }
                         }
                     }
                 }

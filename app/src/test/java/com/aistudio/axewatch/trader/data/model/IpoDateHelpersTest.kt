@@ -1,0 +1,70 @@
+package com.aistudio.axewatch.trader.data.model
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+/** Pins the allotment picker's sectioning + recent-first ordering. */
+class IpoDateHelpersTest {
+
+    private fun issue(
+        status: String,
+        close: String = "",
+        open: String = "",
+        date: String = ""
+    ) = IpoIssue(
+        symbol = "X", companyName = "X Co", category = "Mainboard",
+        status = status, issueOpenDate = open, issueCloseDate = close,
+        priceBand = "", issuePrice = 0.0, lotSize = 0, issueSizeCr = 0.0,
+        registrar = "Unknown", allotmentDate = date
+    )
+
+    @Test
+    fun `loose dates parse across tracker formats`() {
+        assertEquals(20260918L, parseLooseDate("18 Sep 2026"))
+        assertEquals(20260918L, parseLooseDate("18 Sept 2026"))
+        assertEquals(20260918L, parseLooseDate("2026-09-18"))
+        assertEquals(20260918L, parseLooseDate("18-09-2026"))
+        assertEquals(0L, parseLooseDate("—"))
+        assertEquals(0L, parseLooseDate("TBA"))
+        assertEquals(0L, parseLooseDate(""))
+        assertEquals(0L, parseLooseDate("Sep 2026"))
+    }
+
+    @Test
+    fun `missing year defaults to supplied year`() {
+        assertEquals(20260916L, parseLooseDate("16 Sept", nowYear = 2026))
+        assertEquals(20250916L, parseLooseDate("16 Sept", nowYear = 2025))
+    }
+
+    @Test
+    fun `declared date always wins section zero`() {
+        assertEquals(0, ipoSection(issue("Active", date = "18 Sep 2026")))
+        assertEquals(0, ipoSection(issue("Forthcoming", date = "18 Sep 2026")))
+        assertEquals(0, ipoSection(issue("Closed")))
+        assertEquals(0, ipoSection(issue("Listed")))
+        assertEquals(1, ipoSection(issue("Active")))
+        assertEquals(1, ipoSection(issue("Open")))
+        assertEquals(2, ipoSection(issue("Forthcoming")))
+    }
+
+    @Test
+    fun `recency prefers allotment date over close over open`() {
+        assertEquals(20260918L, ipoRecencyKey(issue("Closed", close = "10 Sep 2026", date = "18 Sep 2026")))
+        assertEquals(20260920L, ipoRecencyKey(issue("Closed", close = "20 Sep 2026")))
+        assertEquals(20260910L, ipoRecencyKey(issue("Active", open = "10 Sep 2026")))
+        assertEquals(0L, ipoRecencyKey(issue("Active")))
+    }
+
+    @Test
+    fun `picker ordering puts declared recent first`() {
+        val items = listOf(
+            issue("Forthcoming", open = "25 Sep 2026"),
+            issue("Active", open = "10 Sep 2026", close = "16 Sep 2026"),
+            issue("Closed", close = "12 Sep 2026", date = "19 Sep 2026")
+        )
+        val ordered = items.sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
+        assertEquals("Closed", ordered[0].status)
+        assertEquals("Active", ordered[1].status)
+        assertEquals("Forthcoming", ordered[2].status)
+    }
+}

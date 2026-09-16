@@ -119,6 +119,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     // Allotment
     val savedPans by viewModel.savedPans.collectAsState()
     val allotmentRecords by viewModel.allotmentRecords.collectAsState()
+    val allotBusy by viewModel.allotBusy.collectAsState()
+    val tradeScanRunning by viewModel.tradeScanRunning.collectAsState()
+    val tradeScanProgress by viewModel.tradeScanProgress.collectAsState()
     val registrarHealth by viewModel.registrarHealth.collectAsState()
     val registrarLinks = viewModel.registrarLinks
 
@@ -265,7 +268,10 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                         )
                     },
                     onResetAccount = { viewModel.resetPaperAccount() },
-                    onScanIdeas = { viewModel.scanIdeas(force = true) }
+                    onScanIdeas = { viewModel.scanIdeas(force = true) },
+                    onAutoScanIdeas = { viewModel.autoScanIdeas() },
+                    scanRunning = tradeScanRunning,
+                    scanProgress = tradeScanProgress
                 )
                 3 -> PortfolioScreen(
                     summary = summary,
@@ -296,11 +302,15 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     records = allotmentRecords,
                     healthList = registrarHealth,
                     registrarLinks = registrarLinks,
+                    checkBusy = allotBusy,
                     onCheckAllotment = { pan, sym, holder ->
                         viewModel.checkAllotment(pan, sym, holder)
                     },
                     onCheckBulkAllotment = { ipoSymbol ->
                         viewModel.checkBulkAllotment(ipoSymbol)
+                    },
+                    onRetryRecord = { rec ->
+                        viewModel.retryAllotment(rec)
                     },
                     onRecordManualAllotment = { pan, sym, st, sh, app ->
                         viewModel.recordManualAllotment(pan, sym, st, sh, app)

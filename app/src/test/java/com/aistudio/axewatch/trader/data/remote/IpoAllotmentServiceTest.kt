@@ -1,6 +1,7 @@
 package com.aistudio.axewatch.trader.data.remote
 
 import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -193,8 +194,32 @@ class IpoAllotmentServiceTest {
         assertEquals("", r.applicationNo)
     }
 
-    // ---- Record status vocabulary ----
+    // ---- Tolerant share counts (the RentoMojo-class miss) ----
 
+    @Test
+    fun `parseShareCount handles every registrar number shape`() {
+        assertEquals(150, IpoAllotmentService.parseShareCount(150))
+        assertEquals(150, IpoAllotmentService.parseShareCount(150L))
+        assertEquals(1234, IpoAllotmentService.parseShareCount("1,234"))
+        assertEquals(150, IpoAllotmentService.parseShareCount("150.0"))
+        assertEquals(12, IpoAllotmentService.parseShareCount(12.7))
+        assertEquals(0, IpoAllotmentService.parseShareCount(null))
+        assertEquals(0, IpoAllotmentService.parseShareCount(""))
+        assertEquals(0, IpoAllotmentService.parseShareCount("null"))
+        assertEquals(0, IpoAllotmentService.parseShareCount("abc"))
+    }
+
+    // ---- Status gating (declared results beat lagging tracker status) ----
+
+    @Test
+    fun `forthcoming and active short-circuit without network`() = runBlocking {
+        val f = svc.queryAllotment("ABCDE1234F", "X", "X Co", "Forthcoming")
+        assertEquals("RESULTS_NOT_OUT", f.status)
+        val a = svc.queryAllotment("ABCDE1234F", "X", "X Co", "Active")
+        assertEquals("RESULTS_NOT_OUT", a.status)
+    }
+
+    // ---- Record status vocabulary ----
     @Test
     fun `status labels distinguish every outcome`() {
         fun label(status: String) = AllotmentRecordEntity(

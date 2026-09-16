@@ -33,8 +33,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +83,10 @@ fun PaperTradingScreen(
     onSellPosition: (PaperPositionEntity) -> Unit,
     onResetAccount: () -> Unit,
     onScanIdeas: () -> Unit = {},
+    // Cached (non-force) scan used for the automatic first run.
+    onAutoScanIdeas: () -> Unit = {},
+    scanRunning: Boolean = false,
+    scanProgress: Pair<Int, Int> = 0 to 0,
     modifier: Modifier = Modifier
 ) {
     var subTab by remember { mutableIntStateOf(0) } // 0: Positions, 1: Model Signals, 2: Model Report Card, 3: Order History
@@ -102,6 +108,13 @@ fun PaperTradingScreen(
             "SELL" -> tradeIdeas.filter { it.signal == "SELL" }
             else -> tradeIdeas
         }
+    }
+
+    // Auto-run the scan once (cached) on entering the Signals tab:
+    // previously the model "never loaded" because nothing triggered the
+    // scan except a manual tap buried below.
+    LaunchedEffect(subTab, tradeIdeas.isEmpty()) {
+        if (subTab == 1 && tradeIdeas.isEmpty() && !scanRunning) onAutoScanIdeas()
     }
 
     LazyColumn(
@@ -342,11 +355,15 @@ fun PaperTradingScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = if (tradeIdeas.isEmpty()) "Run Scan for Setups" else "Re-Run Scan",
-                                    color = AxePrimaryCyan,
+                                    text = when {
+                                        scanRunning -> "Scanning…"
+                                        tradeIdeas.isEmpty() -> "Run Scan for Setups"
+                                        else -> "Re-Run Scan"
+                                    },
+                                    color = if (scanRunning) AxeTextMuted else AxePrimaryCyan,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.clickable { onScanIdeas() }
+                                    modifier = Modifier.clickable(enabled = !scanRunning) { onScanIdeas() }
                                 )
                                 Text(
                                     text = "Inspect Full Model Architecture & Calibration",
@@ -354,6 +371,24 @@ fun PaperTradingScreen(
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold,
                                     modifier = Modifier.clickable { subTab = 2 }
+                                )
+                            }
+                            // Live scan progress: a 50-symbol Yahoo sweep
+                            // takes ~half a minute; silence read as "broken".
+                            if (scanRunning) {
+                                Spacer(modifier = Modifier.height(8.dp))
+                                val (done, total) = scanProgress
+                                LinearProgressIndicator(
+                                    progress = { if (total > 0) done.toFloat() / total else 0f },
+                                    color = AxePrimaryCyan,
+                                    trackColor = AxeDarkSurfaceElevated,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = if (total > 0) "Scanning NIFTY 50 · $done/$total" else "Warming up…",
+                                    color = AxeTextMuted,
+                                    fontSize = 10.sp
                                 )
                             }
                         }
@@ -415,7 +450,11 @@ fun PaperTradingScreen(
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Text(
-                                    text = if (tradeIdeas.isEmpty()) "No signals yet" else "No signals match this filter",
+                                    text = when {
+                                        scanRunning -> "Scanning NIFTY 50…"
+                                        tradeIdeas.isEmpty() -> "No signals yet"
+                                        else -> "No signals match this filter"
+                                    },
                                     color = AxeTextPrimary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -426,7 +465,7 @@ fun PaperTradingScreen(
                                     color = AxeTextMuted,
                                     fontSize = 11.sp
                                 )
-                                if (tradeIdeas.isEmpty()) {
+                                if (tradeIdeas.isEmpty() && !scanRunning) {
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Box(
                                         modifier = Modifier
