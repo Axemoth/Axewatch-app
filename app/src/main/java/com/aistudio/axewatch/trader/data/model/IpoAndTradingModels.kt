@@ -1,0 +1,177 @@
+package com.aistudio.axewatch.trader.data.model
+
+data class IpoIssue(
+    val symbol: String,
+    val companyName: String,
+    val category: String, // "Mainboard" or "SME"
+    val status: String, // "Active", "Forthcoming", "Closed", "Listed"
+    val issueOpenDate: String,
+    val issueCloseDate: String,
+    val priceBand: String,
+    val issuePrice: Double,
+    val lotSize: Int,
+    val issueSizeCr: Double,
+    val registrar: String,
+    val qibSub: Double = 0.0,
+    val niiSub: Double = 0.0,
+    val shniSub: Double = 0.0, // Small HNI (₹2L - ₹10L)
+    val bhniSub: Double = 0.0, // Big HNI (> ₹10L)
+    val riiSub: Double = 0.0,  // Retail
+    val totalSub: Double = 0.0,
+    val gmpAmount: Double = 0.0,
+    val gmpPercent: Double = 0.0,
+    val estListingPrice: Double = 0.0
+)
+
+data class GmpItem(
+    val companyName: String,
+    val symbol: String,
+    val issuePrice: Double,
+    val gmpAmount: Double,
+    val gmpPercent: Double,
+    val estListingPrice: Double,
+    val status: String, // "Open", "Upcoming", "Closed", "Listed"
+    val fireRating: Int, // 1 to 5
+    val lastUpdated: String
+)
+
+data class PastIpoItem(
+    val symbol: String,
+    val companyName: String,
+    val issuePrice: Double,
+    val listingPrice: Double,
+    // Unknown unless the tracker published them: 0.0 renders as "—", and
+    // listingDate "" renders as "—". Never derive these from other columns.
+    val currentPrice: Double = 0.0,
+    val listingGainPercent: Double,
+    val totalSub: Double = 0.0,
+    val listingDate: String = ""
+)
+
+data class TradeIdea(
+    val symbol: String,
+    val name: String,
+    val signal: String, // "BUY" or "SELL"
+    val currentPrice: Double,
+    val entryPrice: Double = currentPrice,
+    val stopLoss: Double,
+    val targetPrice: Double,
+    val targetPrice2: Double = targetPrice * 1.025,
+    val riskReward: String,
+    val horizonDays: Int,
+    // 0.0 = unvalidated on-device. Displayed accuracy must come from a real
+    // measurement, never from a placeholder constant.
+    val accuracy: Double = 0.0,
+    val score: Int = 0,
+    val driftPercent: Double = 0.0,
+    val ageDays: Double = 0.0,
+    val suggestedQty05Pct: Int,
+    val suggestedQty1Pct: Int,
+    val suggestedQty2Pct: Int,
+    val reason: String = ""
+)
+
+data class ModelCalibrationBucket(
+    val rangeLabel: String,
+    val lowProb: Double = 0.4,
+    val highProb: Double = 0.5,
+    val sampleCount: Int,
+    val actualWinRate: Double, // in percent, e.g. 64.0
+    val confidenceRange: String = rangeLabel
+)
+
+data class QuantModelReportCard(
+    // No on-device training exists: every metric defaults to "no measurement"
+    // and the UI must gate the whole card on `validated`. Do NOT fill these
+    // with plausible-looking constants — that shipped once and misled users.
+    val modelName: String = "NIFTY-50 Multi-Factor Alpha Engine",
+    val modelVersion: String = "2.4.1",
+    val embargoStatus: String = "Not validated on-device",
+    val status: String = "Unvalidated",
+    val validated: Boolean = false,
+    val walkForwardAccuracy: Double = 0.0,
+    val accuracyOutSample: Double = walkForwardAccuracy,
+    val walkForwardAuc: Double = 0.0,
+    val rocAuc: Double = walkForwardAuc,
+    val strongBuyPrecision: Double = 0.0,
+    val precisionStrongBuy: Double = strongBuyPrecision,
+    val pickSpreadBps: Double = 0.0,
+    val stocksCovered: Int = 0,
+    val samplesCount: Int = 0,
+    val sampleCount: Int = samplesCount,
+    val featuresCount: Int = 49,
+    val featureVersion: Int = 2,
+    val baseRate: Double = 0.0,
+    val baseRateAccuracy: Double = baseRate,
+    val hasEdge: Boolean = false,
+    val horizonDays: Int = 10,
+    val forecastHorizonDays: Int = horizonDays,
+    val trainedDate: String = "—",
+    val calibrationBuckets: List<ModelCalibrationBucket> = emptyList()
+)
+
+data class PortfolioSummary(
+    val totalInvested: Double,
+    val currentValue: Double,
+    val totalProfitLoss: Double,
+    val profitLossPercent: Double,
+    // Null until measurable: day return needs per-holding prev-close data
+    // (not yet collected); XIRR needs dated cashflows. Render as "—".
+    val dayReturn: Double? = null,
+    val dayReturnPercent: Double? = null,
+    // Null until computed from dated cashflows (holdings carry no purchase
+    // dates yet) — renders as "—", never as a plausible constant.
+    val xirrPercent: Double? = null,
+    val holdingsCount: Int
+)
+
+data class MutualFundScheme(
+    val code: String,
+    val name: String,
+    val fundHouse: String,
+    val category: String, // "Flexi Cap", "Large Cap", "Small Cap", "Mid Cap", "Index", "Hybrid", "Debt"
+    val nav: Double,
+    val navPrev: Double,
+    val dayChangePercent: Double,
+    val expenseRatio: Double,
+    val aumCr: Double,
+    val return1Yr: Double,
+    val return3Yr: Double,
+    // Null until derived from real NAV history — renders as "—".
+    val return5Yr: Double? = null,
+    val equityPercent: Double,
+    val debtPercent: Double,
+    val cashPercent: Double,
+    val otherPercent: Double = 0.0,
+    val topHoldings: List<String> = emptyList(),
+    val benchmark: String = "NIFTY 500 TRI",
+    val riskLevel: String = "Very High"
+)
+
+data class RegistrarSourceHealth(
+    val id: String,
+    val name: String,
+    val status: String, // "OPERATIONAL", "CAPTCHA_HANDOFF", "OFFLINE"
+    val latencyMs: Int,
+    val description: String
+)
+
+data class RegistrarLink(
+    val title: String,
+    val subtitle: String,
+    val url: String,
+    val badge: String = "Official"
+)
+
+data class PortfolioConcentration(
+    val topHoldingSymbol: String,
+    val topHoldingPercent: Double,
+    val isHighRisk: Boolean, // > 25% single stock
+    val top5SharePercent: Double,
+    val equityAllocationPercent: Double,
+    val mutualFundAllocationPercent: Double,
+    val bestPerformer: String,
+    val bestPerformerGainPercent: Double,
+    val worstPerformer: String,
+    val worstPerformerLossPercent: Double
+)
