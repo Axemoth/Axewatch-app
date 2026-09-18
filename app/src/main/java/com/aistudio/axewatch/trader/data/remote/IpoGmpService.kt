@@ -492,7 +492,7 @@ class IpoGmpService {
         val norm = normalizeKey(companyName)
         if (norm.isEmpty()) return null
         subMap[norm]?.let { return it }
-        // Guarded substring fallback (≥10 shared chars): unguarded
+        // Guarded substring fallback (>=10 shared chars): unguarded
         // contains() collides ("Hero Motors" vs "Motors"), attributing one
         // IPO's live subscription to another.
         for ((k, v) in subMap) {

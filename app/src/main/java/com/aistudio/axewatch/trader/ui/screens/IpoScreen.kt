@@ -65,29 +65,34 @@ fun IpoScreen(
     var calculatorIpo by remember { mutableStateOf<IpoIssue?>(null) }
 
     val filteredIpos = remember(ipos, searchQuery) {
-        if (searchQuery.isBlank()) ipos else ipos.filter {
+        val matches = if (searchQuery.isBlank()) ipos else ipos.filter {
             it.companyName.contains(searchQuery, ignoreCase = true) ||
             it.symbol.contains(searchQuery, ignoreCase = true)
         }
+        // LazyColumn keys must be unique and non-blank: a duplicate or blank
+        // symbol crashes the list with "Key ... was already used".
+        matches.filter { it.symbol.isNotBlank() }.distinctBy { it.symbol }
     }
 
     val filteredGmps = remember(gmps, searchQuery) {
-        if (searchQuery.isBlank()) gmps else gmps.filter {
+        val matches = if (searchQuery.isBlank()) gmps else gmps.filter {
             it.companyName.contains(searchQuery, ignoreCase = true) ||
             it.symbol.contains(searchQuery, ignoreCase = true)
         }
+        matches.filter { it.symbol.isNotBlank() }.distinctBy { it.symbol }
     }
 
     val filteredPast = remember(pastIpos, searchQuery) {
-        if (searchQuery.isBlank()) pastIpos else pastIpos.filter {
+        val matches = if (searchQuery.isBlank()) pastIpos else pastIpos.filter {
             it.companyName.contains(searchQuery, ignoreCase = true) ||
             it.symbol.contains(searchQuery, ignoreCase = true)
         }
+        matches.filter { it.symbol.isNotBlank() }.distinctBy { it.symbol }
     }
 
-    if (calculatorIpo != null) {
+    calculatorIpo?.let { ipo ->
         IpoCalculatorDialog(
-            ipo = calculatorIpo!!,
+            ipo = ipo,
             onDismiss = { calculatorIpo = null }
         )
     }
@@ -166,6 +171,22 @@ fun IpoScreen(
                             onCalculateGain = { calculatorIpo = ipo }
                         )
                     }
+                    if (filteredIpos.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No active IPOs right now — pull to refresh",
+                                    color = AxeTextMuted,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
                 }
                 1 -> {
                     // Live GMP Board
@@ -176,7 +197,9 @@ fun IpoScreen(
                                 val match = ipos.find { it.symbol == gmp.symbol } ?: IpoIssue(
                                     symbol = gmp.symbol,
                                     companyName = gmp.companyName,
-                                    category = "Mainboard",
+                                    // GmpItem carries no category field — "Unknown",
+                                    // never an invented "Mainboard".
+                                    category = "Unknown",
                                     priceBand = "₹${gmp.issuePrice.toInt()}",
                                     issuePrice = gmp.issuePrice,
                                     // Unknown until the issue feed carries this
@@ -202,11 +225,43 @@ fun IpoScreen(
                             }
                         )
                     }
+                    if (filteredGmps.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No GMP rows match your search",
+                                    color = AxeTextMuted,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+                    }
                 }
                 2 -> {
                     // Past Listings
                     items(filteredPast, key = { it.symbol }) { past ->
                         PastListingCard(past = past)
+                    }
+                    if (filteredPast.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(32.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No past listings loaded yet",
+                                    color = AxeTextMuted,
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -337,7 +392,7 @@ private fun IpoIssueCard(
                     ) {
                         Text("SUBSCRIPTION STATUS", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            text = "Total: ${"%,.2f".format(ipo.totalSub)}x",
+                            text = if (ipo.totalSub > 0.0) "Total: ${"%,.2f".format(ipo.totalSub)}x" else "Total: —",
                             color = if (ipo.totalSub >= 1.0) AxeEmeraldGreen else AxeTextSecondary,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
@@ -348,11 +403,12 @@ private fun IpoIssueCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        SubscriptionItem(label = "QIB", value = "${ipo.qibSub}x")
-                        SubscriptionItem(label = "NII", value = "${ipo.niiSub}x")
-                        SubscriptionItem(label = "sHNI", value = "${ipo.shniSub}x")
-                        SubscriptionItem(label = "bHNI", value = "${ipo.bhniSub}x")
-                        SubscriptionItem(label = "Retail", value = "${ipo.riiSub}x")
+                        // 0.0 = not yet reported by the feed — render "—", never "0.0x".
+                        SubscriptionItem(label = "QIB", value = if (ipo.qibSub > 0.0) "${ipo.qibSub}x" else "—")
+                        SubscriptionItem(label = "NII", value = if (ipo.niiSub > 0.0) "${ipo.niiSub}x" else "—")
+                        SubscriptionItem(label = "sHNI", value = if (ipo.shniSub > 0.0) "${ipo.shniSub}x" else "—")
+                        SubscriptionItem(label = "bHNI", value = if (ipo.bhniSub > 0.0) "${ipo.bhniSub}x" else "—")
+                        SubscriptionItem(label = "Retail", value = if (ipo.riiSub > 0.0) "${ipo.riiSub}x" else "—")
                     }
                 }
             }
@@ -373,7 +429,7 @@ private fun IpoIssueCard(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "Est. Listing: ₹${ipo.estListingPrice.toInt()}",
+                            text = "Est. Listing: ${if (ipo.estListingPrice > 0) "₹${ipo.estListingPrice.toInt()}" else "—"}",
                             color = AxePrimaryCyan,
                             fontSize = 11.sp
                         )
@@ -385,8 +441,10 @@ private fun IpoIssueCard(
                             fontWeight = FontWeight.Medium
                         )
                         Text(
-                            text = "Est. Listing: ${if (ipo.issuePrice > 0) "₹${ipo.issuePrice.toInt()}" else "TBA"}",
-                            color = AxeTextSecondary,
+                            // Never show the issue price under an "Est. Listing" label —
+                            // without real GMP data there is no estimate to give.
+                            text = "Est. Listing: —",
+                            color = AxeTextMuted,
                             fontSize = 11.sp
                         )
                     }
@@ -403,7 +461,7 @@ private fun IpoIssueCard(
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Calculate Gain ➔",
+                        text = "Calculate Gain →",
                         color = AxePrimaryCyan,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -464,7 +522,8 @@ private fun GmpBoardCard(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 val priceDesc = if (gmp.issuePrice > 0) {
-                    "Issue: ₹${gmp.issuePrice.toInt()} → Est: ₹${gmp.estListingPrice.toInt()}"
+                    val est = if (gmp.estListingPrice > 0) "₹${gmp.estListingPrice.toInt()}" else "TBA"
+                    "Issue: ₹${gmp.issuePrice.toInt()} → Est: $est"
                 } else {
                     "Issue: TBA → Est: TBA"
                 }
@@ -559,7 +618,7 @@ private fun PastListingCard(past: PastIpoItem) {
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = if (isProfit) "▲ +${past.listingGainPercent}%" else "▼ ${past.listingGainPercent}%",
+                        text = if (isProfit) "▲ +${past.listingGainPercent}%" else "▼ ${kotlin.math.abs(past.listingGainPercent)}%",
                         color = gainColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold

@@ -38,6 +38,9 @@ History of removed fabrications (do not reintroduce):
 - Fallback `StockQuote(change=10.0, pct=1.0)` and `TradeOutlook(score=80)` for unscanned ideas.
 - "AES encrypted" vault claim (vault is plaintext on-device; UI says so).
 - Hardcoded `OPERATIONAL` health entries (health is measured per attempt).
+- Hardcoded index-constituent prices rendered as live quotes (the static
+  provider now carries 0.0 until the Yahoo feed overlays; UI renders "—",
+  Gainers/Losers/heatmap/valuation all gate on measured quotes).
 
 ## 2. Allotment engine (`data/remote/IpoAllotmentService.kt`)
 
@@ -95,11 +98,14 @@ History of removed fabrications (do not reintroduce):
   the UI gates every metric on it.
 - XIRR/day-return are `null` until measurable (no dated cashflows / prev-close
   feed) and render as "—".
-- **Known limitation**: only 12 tickers refresh live; the other ~38 NIFTY
-  constituents keep bundled seed prices after refresh. Fixing this means a
-  throttled 50-quote refresh (Yahoo 429 risk) — a future work item, not a
-  quick edit. Do not present those prices as live; do not "fix" by inventing
-  fresher numbers.
+- **Known limitation**: only 12 tickers refresh live. The static
+  constituent lists carry 0.0 (membership only), so after refresh the other
+  ~38 NIFTY constituents render "—" until quoted — Gainers/Losers tabs,
+  sector heatmap, breadth, and portfolio valuation all exclude unquoted
+  rows (`lastPrice > 0` gates; valuation falls back to buyPrice). Fixing
+  this means a throttled 50-quote refresh (Yahoo 429 risk) — a future work
+  item, not a quick edit. Do not present unquoted rows as live; do not
+  "fix" by inventing fresher numbers.
 - **Allotment UX rules**: picker sections are Results declared → Open now →
   Upcoming, recent-first (`ipoSection`/`ipoRecencyKey`/`parseLooseDate`,
   all unit-tested); default selection is the most recent declared issue;
@@ -107,7 +113,7 @@ History of removed fabrications (do not reintroduce):
   carry a one-tap retry resolved via the vault (records alone never
   re-identify a PAN).
 
-## 4. Build & test (verified: APK + 40/40 tests green)
+## 4. Build & test (verified: APK + 45/45 tests green)
 
 - Toolchain: JDK 17 + Gradle 9.3.1 + SDK `platforms;android-36` +
   `build-tools;36.0.0`. Set `JAVA_HOME`, `ANDROID_HOME`/`ANDROID_SDK_ROOT`.

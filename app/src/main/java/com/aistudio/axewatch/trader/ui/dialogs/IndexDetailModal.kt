@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -66,7 +67,10 @@ fun IndexDetailModal(
     index: MarketIndex,
     constituents: List<IndexConstituent>,
     onStockClick: (StockQuote) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    // Live quotes by symbol (empty when the feed is down). The static provider
+    // has no prices, so rows without a live quote render "-".
+    liveQuotes: Map<String, StockQuote> = emptyMap()
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedSector by remember { mutableStateOf("All") }
@@ -76,7 +80,7 @@ fun IndexDetailModal(
         listOf("All") + constituents.map { it.sector }.distinct().sorted()
     }
 
-    val filteredConstituents = remember(constituents, searchQuery, selectedSector, sortMode) {
+    val filteredConstituents = remember(constituents, searchQuery, selectedSector, sortMode, liveQuotes) {
         var list = constituents
 
         if (selectedSector != "All") {
@@ -93,8 +97,8 @@ fun IndexDetailModal(
         }
 
         when (sortMode) {
-            1 -> list.sortedByDescending { it.percentChange }
-            2 -> list.sortedBy { it.percentChange }
+            1 -> list.sortedByDescending { liveQuotes[it.symbol]?.percentChange ?: 0.0 }
+            2 -> list.sortedBy { liveQuotes[it.symbol]?.percentChange ?: 0.0 }
             3 -> list.sortedBy { it.symbol }
             else -> list.sortedByDescending { it.weightPercent }
         }
@@ -142,7 +146,7 @@ fun IndexDetailModal(
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
-                                text = "${constituents.size} Stocks",
+                                text = if (constituents.isEmpty()) "—" else "${constituents.size} Stocks",
                                 color = AxePrimaryCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold
@@ -218,13 +222,16 @@ fun IndexDetailModal(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "Day Range: ₹${"%,.0f".format(index.low)} — ₹${"%,.0f".format(index.high)}",
+                            text = if (index.high > 0 && index.low > 0)
+                                    "Day Range: ${"%,.0f".format(index.low)} — ${"%,.0f".format(index.high)}"
+                                else
+                                    "Day Range: —",
                             color = AxeTextSecondary,
                             fontSize = 11.sp
                         )
                         if (index.advances > 0 || index.declines > 0) {
                             Text(
-                                text = "🟢 ${index.advances} Adv · 🔴 ${index.declines} Dec",
+                            text = "${index.advances} Adv · ${index.declines} Dec",
                                 color = AxeTextSecondary,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -367,8 +374,10 @@ fun IndexDetailModal(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(filteredConstituents, key = { it.symbol }) { stock ->
-                        val stockBull = stock.isPositive
+                    itemsIndexed(filteredConstituents, key = { idx, item -> "${item.symbol}#$idx" }) { _, stock ->
+                        // 0.0 = membership seed with no quote yet — not a live quote.
+                        val live = liveQuotes[stock.symbol]?.takeIf { it.lastPrice > 0 }
+                        val stockBull = (live?.percentChange ?: 0.0) >= 0
                         val stockTrend = if (stockBull) AxeEmeraldGreen else AxeRoseRed
 
                         Box(
@@ -377,9 +386,12 @@ fun IndexDetailModal(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AxeDarkSurface)
                                 .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                                .clickable {
-                                    onDismiss()
-                                    onStockClick(stock.toStockQuote())
+                                .clickable(enabled = live != null) {
+                                    val quote = live
+                                    if (quote != null) {
+                                        onDismiss()
+                                        onStockClick(quote)
+                                    }
                                 }
                                 .testTag("constituent_${stock.symbol}")
                                 .padding(12.dp)
@@ -406,7 +418,7 @@ fun IndexDetailModal(
                                                 .padding(horizontal = 5.dp, vertical = 2.dp)
                                         ) {
                                             Text(
-                                                text = "${stock.weightPercent}% wt",
+                                            text = if (stock.weightPercent > 0) "${"%,.1f".format(stock.weightPercent)}% wt" else "— wt",
                                                 color = AxePrimaryCyan,
                                                 fontSize = 9.sp,
                                                 fontWeight = FontWeight.SemiBold
@@ -424,7 +436,7 @@ fun IndexDetailModal(
 
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text(
-                                        text = "₹${"%,.2f".format(stock.lastPrice)}",
+                                        text = live?.let { "₹${"%,.2f".format(it.lastPrice)}" } ?: "—",
                                         color = AxeTextPrimary,
                                         fontSize = 14.sp,
                                         fontWeight = FontWeight.Bold
@@ -433,12 +445,20 @@ fun IndexDetailModal(
                                     Box(
                                         modifier = Modifier
                                             .clip(RoundedCornerShape(4.dp))
-                                            .background(if (stockBull) AxeGreenSubtle else AxeRedSubtle)
+                                        .background(
+                                            when {
+                                                live == null -> AxeDarkSurfaceElevated
+                                                stockBull -> AxeGreenSubtle
+                                                else -> AxeRedSubtle
+                                            }
+                                        )
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = "${if (stockBull) "+" else ""}${"%,.2f".format(stock.change)} (${stock.percentChange}%)",
-                                            color = stockTrend,
+                                                text = live?.let {
+                                                "${if (stockBull) "+" else ""}${"%,.2f".format(it.percentChange)}%"
+                                            } ?: "no live quote",
+                                            color = if (live != null) stockTrend else AxeTextMuted,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.Bold
                                         )

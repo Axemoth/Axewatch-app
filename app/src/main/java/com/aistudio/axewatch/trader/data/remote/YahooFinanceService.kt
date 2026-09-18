@@ -233,14 +233,10 @@ class YahooFinanceService {
                 )
             }
 
-            // Compute running 5-period SMA
-            val window = 5
-            candles.mapIndexed { idx, bar ->
-                val startIdx = max(0, idx - window + 1)
-                val sub = candles.subList(startIdx, idx + 1)
-                val avg = sub.map { it.close }.average()
-                bar.copy(sma = (avg * 10.0).roundToInt() / 10.0)
-            }
+            // SMA is intentionally NOT computed here: the chart derives a real
+            // SMA(20) from the closes (CandlestickChart). The previous 5-period
+            // value was discarded by the caller and labelled "SMA (20)" in the UI.
+            candles
         } catch (e: Exception) {
             Log.w(TAG, "Error fetching Yahoo candles for $symbol: ${e.message}")
             emptyList()

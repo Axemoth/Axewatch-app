@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
+import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurface
@@ -58,10 +59,15 @@ import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurfaceElevated
 import com.aistudio.axewatch.trader.ui.theme.AxeEmeraldGreen
 import com.aistudio.axewatch.trader.ui.theme.AxeGreenSubtle
 import com.aistudio.axewatch.trader.ui.theme.AxePrimaryCyan
+import com.aistudio.axewatch.trader.ui.theme.AxeRedSubtle
 import com.aistudio.axewatch.trader.ui.theme.AxeRoseRed
 import com.aistudio.axewatch.trader.ui.theme.AxeTextMuted
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
 import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
+
+/** "+1.2%" / "-1.2%" — a sign that matches the value, never forced. */
+private fun signedPct(value: Double): String =
+    "${if (value >= 0) "+" else ""}${"%,.1f".format(value)}%"
 
 @Composable
 fun MutualFundDetailModal(
@@ -133,8 +139,8 @@ fun MutualFundDetailModal(
                                     )
                                 }
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Direct Growth",
+                                    Text(
+                                    text = if (scheme.name.contains("Direct", ignoreCase = true)) "Direct Plan" else "Regular Plan",
                                     color = AxeTextMuted,
                                     fontSize = 10.sp
                                 )
@@ -214,12 +220,24 @@ fun MutualFundDetailModal(
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
-                                    .background(AxeGreenSubtle)
+                                    .background(
+                                        when {
+                                            scheme.riskLevel.contains("High", ignoreCase = true) -> AxeRedSubtle
+                                            scheme.riskLevel.contains("Low", ignoreCase = true) -> AxeGreenSubtle
+                                            scheme.riskLevel.isBlank() -> AxeDarkSurfaceElevated
+                                            else -> AxeAmber.copy(alpha = 0.14f)
+                                        }
+                                    )
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
                                 Text(
-                                    text = "Risk: ${scheme.riskLevel}",
-                                    color = AxeEmeraldGreen,
+                                    text = if (scheme.riskLevel.isBlank()) "Risk: unknown" else "Risk: ${scheme.riskLevel}",
+                                    color = when {
+                                        scheme.riskLevel.contains("High", ignoreCase = true) -> AxeRoseRed
+                                        scheme.riskLevel.contains("Low", ignoreCase = true) -> AxeEmeraldGreen
+                                        scheme.riskLevel.isBlank() -> AxeTextMuted
+                                        else -> AxeAmber
+                                    },
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.SemiBold
                                 )
@@ -252,20 +270,20 @@ fun MutualFundDetailModal(
                 ) {
                     MetricBox(
                         title = "1Y Return",
-                        value = "+${scheme.return1Yr}%",
-                        valueColor = AxeEmeraldGreen,
+                        value = signedPct(scheme.return1Yr),
+                        valueColor = if (scheme.return1Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
                         title = "3Y Return",
-                        value = "+${scheme.return3Yr}%",
-                        valueColor = AxeEmeraldGreen,
+                        value = signedPct(scheme.return3Yr),
+                        valueColor = if (scheme.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
                         title = "5Y Return",
-                        value = scheme.return5Yr?.let { "+${"%.1f".format(it)}%" } ?: "—",
-                        valueColor = AxeEmeraldGreen,
+                        value = scheme.return5Yr?.let { signedPct(it) } ?: "—",
+                        valueColor = (scheme.return5Yr ?: 0.0).let { if (it >= 0) AxeEmeraldGreen else AxeRoseRed },
                         modifier = Modifier.weight(1f)
                     )
                 }
@@ -372,10 +390,11 @@ fun MutualFundDetailModal(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
-                            text = if (scheme.debtPercent == 0.0) {
-                                "Pure Equity Scheme: 100% focused on public market equities for maximum wealth generation over 5+ years. No exposure to debt/FDs."
-                            } else {
-                                "Balanced Allocation: Contains ${scheme.debtPercent}% fixed income / sovereign bonds to soften market downturns and provide steady yield."
+                            text = when {
+                                scheme.debtPercent == 0.0 && scheme.cashPercent == 0.0 ->
+                                    "Pure equity: the full portfolio is in public market equities."
+                                else ->
+                                    "Holds ${scheme.equityPercent}% equities, ${scheme.debtPercent}% debt and ${scheme.cashPercent}% cash/FDs."
                             },
                             color = AxeTextSecondary,
                             fontSize = 11.sp,

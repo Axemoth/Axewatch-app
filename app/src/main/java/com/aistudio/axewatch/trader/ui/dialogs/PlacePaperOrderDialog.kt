@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
+import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurface
@@ -53,16 +54,27 @@ fun PlacePaperOrderDialog(
     stock: StockQuote,
     outlook: TradeOutlook? = null,
     availableCash: Double,
+    // Risk-sized qty from the trade-idea tier button; 10 = manual default.
+    initialQty: Int = 10,
     onDismiss: () -> Unit,
     onConfirmOrder: (side: String, quantity: Int, price: Double, stopLoss: Double?, target: Double?) -> Unit
 ) {
     var side by remember { mutableStateOf(if (outlook?.signal?.contains("SELL") == true) "SELL" else "BUY") }
-    var quantityText by remember { mutableStateOf("10") }
+    // Keyed on initialQty so each dialog invocation re-reads the prefilled qty.
+    var quantityText by remember(initialQty) { mutableStateOf(if (initialQty > 0) initialQty.toString() else "10") }
     var stopLossText by remember { mutableStateOf(outlook?.stopLoss?.toString() ?: "") }
     var targetText by remember { mutableStateOf(outlook?.target1?.toString() ?: "") }
 
-    val qty = quantityText.toIntOrNull() ?: 1
+    // No silent coercion: unparseable/empty/zero quantity leaves the order
+    // unconfirmed with an inline error instead of falling back to 1 share.
+    val qty = quantityText.toIntOrNull() ?: 0
+    val qtyValid = qty > 0
     val totalCost = stock.lastPrice * qty
+    // BUY needs cash (0 while the account loads); SELL spends none.
+    val accountLoaded = availableCash > 0
+    val insufficientCash = side == "BUY" && accountLoaded && totalCost > availableCash
+    val buyBlocked = side == "BUY" && (insufficientCash || !accountLoaded)
+    val canConfirm = qtyValid && !buyBlocked
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -149,6 +161,8 @@ fun PlacePaperOrderDialog(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
+                    // Sets (does not add to) the quantity — label shows the
+                    // absolute value it will produce.
                     listOf(5, 10, 25, 50, 100).forEach { q ->
                         Box(
                             modifier = Modifier
@@ -157,9 +171,19 @@ fun PlacePaperOrderDialog(
                                 .clickable { quantityText = q.toString() }
                                 .padding(horizontal = 8.dp, vertical = 4.dp)
                         ) {
-                            Text("+$q", color = AxeTextSecondary, fontSize = 11.sp)
+                            Text("$q", color = AxeTextSecondary, fontSize = 11.sp)
                         }
                     }
+                }
+
+                // Inline validation messages — the Confirm button never
+                // silently coerces a bad input into a real order.
+                if (!qtyValid) {
+                    Text("Enter a valid quantity", color = AxeRoseRed, fontSize = 11.sp)
+                } else if (side == "BUY" && !accountLoaded) {
+                    Text("Account loading…", color = AxeAmber, fontSize = 11.sp)
+                } else if (insufficientCash) {
+                    Text("Insufficient cash", color = AxeRoseRed, fontSize = 11.sp)
                 }
 
                 Spacer(modifier = Modifier.height(12.dp))
@@ -225,7 +249,13 @@ fun PlacePaperOrderDialog(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text("Available Cash:", color = AxeTextMuted, fontSize = 11.sp)
-                            Text("₹${"%,.2f".format(availableCash)}", color = AxePrimaryCyan, fontSize = 12.sp)
+                            // "—" while the account hasn't loaded: don't show
+                            // a fabricated ₹0.00 balance.
+                            Text(
+                                if (accountLoaded) "₹${"%,.2f".format(availableCash)}" else "—",
+                                color = AxePrimaryCyan,
+                                fontSize = 12.sp
+                            )
                         }
                     }
                 }
@@ -247,13 +277,12 @@ fun PlacePaperOrderDialog(
 
                     Button(
                         onClick = {
-                            if (qty > 0) {
-                                val sl = stopLossText.toDoubleOrNull()
-                                val tgt = targetText.toDoubleOrNull()
-                                onConfirmOrder(side, qty, stock.lastPrice, sl, tgt)
-                                onDismiss()
-                            }
+                            val sl = stopLossText.toDoubleOrNull()
+                            val tgt = targetText.toDoubleOrNull()
+                            onConfirmOrder(side, qty, stock.lastPrice, sl, tgt)
+                            onDismiss()
                         },
+                        enabled = canConfirm,
                         colors = ButtonDefaults.buttonColors(containerColor = if (side == "BUY") AxeEmeraldGreen else AxeRoseRed),
                         modifier = Modifier
                             .weight(1.3f)

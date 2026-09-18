@@ -16,3 +16,5 @@
 local.properties
 .env
 debug.keystore
+# Local audit tooling (JDK + Gradle distribution, patch scripts, build logs)
+/.toolchain/

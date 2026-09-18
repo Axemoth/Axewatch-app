@@ -131,7 +131,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val stockOutlook by viewModel.selectedStockOutlook.collectAsState()
 
     var showAddHoldingDialog by remember { mutableStateOf(false) }
-    var paperOrderStock by remember { mutableStateOf<Pair<StockQuote, TradeOutlook?>?>(null) }
+    // Pending paper-order target: quote, optional outlook, and the risk-sized
+    // qty pre-filled from the trade-idea tier button (10 = manual default).
+    var paperOrderStock by remember { mutableStateOf<Triple<StockQuote, TradeOutlook?, Int>?>(null) }
 
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -256,7 +258,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                             walkForwardAccuracy = idea.accuracy.takeIf { it > 0 },
                             reasons = listOf(idea.reason.ifBlank { "Rule-based technical setup" })
                         )
-                        paperOrderStock = Pair(quote, outlook)
+                        // Thread the risk-sized qty from the tier button into
+                        // the order dialog instead of discarding it.
+                        paperOrderStock = Triple(quote, outlook, if (qty > 0) qty else 10)
                     },
                     onSellPosition = { pos ->
                         viewModel.placePaperOrder(
@@ -352,17 +356,19 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
             onDismiss = { viewModel.dismissStockModal() },
             onTakeTrade = { st, ot ->
                 viewModel.dismissStockModal()
-                paperOrderStock = Pair(st, ot)
+                paperOrderStock = Triple(st, ot, 10)
             }
         )
     }
 
     // Place Paper Order Dialog
-    paperOrderStock?.let { (stock, outlook) ->
+    paperOrderStock?.let { (stock, outlook, initialQty) ->
         PlacePaperOrderDialog(
             stock = stock,
             outlook = outlook,
-            availableCash = account?.cashBalance ?: 1000000.0,
+            initialQty = initialQty,
+            // 0.0 while the account loads — never fake ₹10,00,000 here.
+            availableCash = account?.cashBalance ?: 0.0,
             onDismiss = { paperOrderStock = null },
             onConfirmOrder = { side, qty, price, sl, tgt ->
                 viewModel.placePaperOrder(

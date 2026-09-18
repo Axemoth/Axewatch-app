@@ -589,12 +589,15 @@ class AxewatchRepository(
             _indices.value = fetchedIndices
         }
 
-        // Dynamic Sector Heatmap update based on latest live stocks
-        val itStocks = currentStocks.filter { it.sector == "IT" }
-        val bankStocks = currentStocks.filter { it.sector == "Banking" }
-        val autoStocks = currentStocks.filter { it.sector == "Automobile" }
-        val energyStocks = currentStocks.filter { it.sector == "Energy" }
-        val fmcgStocks = currentStocks.filter { it.sector == "FMCG" }
+        // Dynamic Sector Heatmap update based on latest live stocks.
+        // Average MEASURED quotes only: unrefreshed 0.0 seeds would drag
+        // every sector average toward zero.
+        val measured = currentStocks.filter { it.lastPrice > 0 }
+        val itStocks = measured.filter { it.sector == "IT" }
+        val bankStocks = measured.filter { it.sector == "Banking" }
+        val autoStocks = measured.filter { it.sector == "Automobile" }
+        val energyStocks = measured.filter { it.sector == "Energy" }
+        val fmcgStocks = measured.filter { it.sector == "FMCG" }
 
         _sectorHeatmap.value = listOf(
             SectorHeatmapItem("NIFTY IT", (itStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 0.0).let { (it * 100).roundToInt() / 100.0 }, itStocks.maxByOrNull { it.percentChange }?.symbol ?: "—"),

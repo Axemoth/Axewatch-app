@@ -2,6 +2,7 @@ package com.aistudio.axewatch.trader.data.local.entity
 
 import androidx.room.Entity
 import androidx.room.PrimaryKey
+import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 
 @Entity(tableName = "pan_vault")
 data class PanVaultEntity(
@@ -11,15 +12,29 @@ data class PanVaultEntity(
     val relation: String = "Self",
     val addedAt: Long = System.currentTimeMillis()
 ) {
+    /** Single source of truth is IpoAllotmentService.maskPan ("AB*****F").
+     *  The previous local implementation ("ABCDE****F") leaked 5 of 10 PAN
+     *  characters and could never match registrar records. */
     val maskedPan: String
-        get() {
-            val upper = panNumber.trim().uppercase()
-            return if (upper.length >= 10) {
-                "${upper.take(5)}****${upper.takeLast(1)}"
-            } else {
-                "*****"
-            }
-        }
+        get() = IpoAllotmentService.maskPan(panNumber)
+}
+
+/**
+ * Legacy-compatible masked-PAN matching. Records stored before the mask was
+ * unified carry the old over-revealing "ABCDE****F" format (5 visible chars +
+ * 4 stars + last), while the vault now produces the compliant "AB*****F"
+ * (2 + 5 stars + 1). Both formats keep the leading characters and the final
+ * character, so the shorter visible prefix must be a prefix of the longer one
+ * and both must end with the same character. The full PAN is never involved —
+ * this operates on masked strings only, so a record can never re-identify it.
+ */
+fun maskMatches(vaultMasked: String, recordMasked: String): Boolean {
+    if (vaultMasked == recordMasked) return true
+    val v = vaultMasked.replace("*", "")
+    val r = recordMasked.replace("*", "")
+    if (v.isEmpty() || r.isEmpty()) return false
+    val (short, long) = if (v.length <= r.length) v to r else r to v
+    return long.startsWith(short.dropLast(1)) && v.last() == r.last()
 }
 
 @Entity(tableName = "allotment_records")

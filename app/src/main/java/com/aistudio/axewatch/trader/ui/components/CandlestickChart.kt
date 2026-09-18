@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -60,6 +61,9 @@ fun CandlestickChart(
     var showSma by remember { mutableStateOf(true) }
     var selectedCandleIndex by remember { mutableIntStateOf(-1) }
 
+    // A timeframe switch must not keep a stale highlight from the previous series.
+    LaunchedEffect(candles) { selectedCandleIndex = -1 }
+
     if (candles.isEmpty()) {
         Box(
             modifier = modifier
@@ -68,7 +72,7 @@ fun CandlestickChart(
                 .background(AxeDarkSurfaceElevated, RoundedCornerShape(12.dp)),
             contentAlignment = Alignment.Center
         ) {
-            Text("Loading chart data…", color = AxeTextMuted, fontSize = 13.sp)
+            Text("Chart data unavailable — pull to refresh", color = AxeTextMuted, fontSize = 13.sp)
         }
         return
     }
@@ -76,6 +80,21 @@ fun CandlestickChart(
     val minPrice = candles.minOfOrNull { it.low } ?: 0.0
     val maxPrice = candles.maxOfOrNull { it.high } ?: 100.0
     val priceRange = max(maxPrice - minPrice, 1.0)
+
+    // Real SMA(20) computed from the closes. Rule #1: when there is not enough
+    // history the line is HIDDEN — a candle midpoint is never substituted for it.
+    val smaSeries = remember(candles) {
+        val window = 20
+        val closes = candles.map { it.close }
+        if (closes.size < window) {
+            emptyList()
+        } else {
+            List(closes.size) { idx ->
+                if (idx < window - 1) null else closes.subList(idx - window + 1, idx + 1).average()
+            }
+        }
+    }
+    val hasSma = smaSeries.isNotEmpty()
 
     val activeCandle = if (selectedCandleIndex in candles.indices) {
         candles[selectedCandleIndex]
@@ -126,20 +145,22 @@ fun CandlestickChart(
                 }
             }
 
-            // Indicator toggle
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (showSma) AxeAmber.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
-                    .clickable { showSma = !showSma }
-                    .padding(horizontal = 8.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    text = "SMA (20)",
-                    color = if (showSma) AxeAmber else AxeTextMuted,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
+            // Indicator toggle — only offered when a real SMA(20) exists for this series
+            if (hasSma) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (showSma) AxeAmber.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
+                        .clickable { showSma = !showSma }
+                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "SMA (20)",
+                        color = if (showSma) AxeAmber else AxeTextMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 
@@ -229,7 +250,7 @@ fun CandlestickChart(
             for (i in 0..gridLineCount) {
                 val y = height * (i.toFloat() / gridLineCount)
                 drawLine(
-                    color = Color(0x18FFFFFF),
+                    color = AxeBorder.copy(alpha = 0.55f),
                     start = Offset(0f, y),
                     end = Offset(width, y),
                     strokeWidth = 1f,
@@ -245,7 +266,7 @@ fun CandlestickChart(
             if (selectedCandleIndex in candles.indices) {
                 val highlightX = selectedCandleIndex * slotWidth
                 drawRect(
-                    color = Color(0x1500E5FF),
+                    color = AxePrimaryCyan.copy(alpha = 0.08f),
                     topLeft = Offset(highlightX, 0f),
                     size = Size(slotWidth, height)
                 )
@@ -283,13 +304,13 @@ fun CandlestickChart(
                 )
             }
 
-            // Draw SMA Line if enabled
-            if (showSma) {
+            // Draw SMA Line if enabled — plotted only where a real SMA(20) value exists
+            if (showSma && hasSma) {
                 val smaPath = Path()
                 var firstPoint = true
 
-                candles.forEachIndexed { index, candle ->
-                    val smaVal = candle.sma ?: ((candle.open + candle.close) / 2.0)
+                candles.forEachIndexed { index, _ ->
+                    val smaVal = smaSeries.getOrNull(index) ?: return@forEachIndexed
                     val centerX = (index * slotWidth) + (slotWidth / 2f)
                     val smaY = height - (((smaVal - minPrice) / priceRange) * height).toFloat()
 
@@ -301,11 +322,13 @@ fun CandlestickChart(
                     }
                 }
 
-                drawPath(
-                    path = smaPath,
-                    color = AxeAmber,
-                    style = Stroke(width = 2.5f, cap = StrokeCap.Round)
-                )
+                if (!firstPoint) {
+                    drawPath(
+                        path = smaPath,
+                        color = AxeAmber,
+                        style = Stroke(width = 2.5f, cap = StrokeCap.Round)
+                    )
+                }
             }
         }
 
@@ -321,7 +344,7 @@ fun CandlestickChart(
                 color = AxeTextSecondary,
                 fontSize = 10.sp
             )
-            if (showSma) {
+            if (showSma && hasSma) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         modifier = Modifier

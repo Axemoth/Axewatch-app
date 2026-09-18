@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -280,7 +281,8 @@ fun PaperTradingScreen(
                         }
                     }
                 } else {
-                    items(positions, key = { it.symbol }) { position ->
+                    // Index in key: same symbol twice must not crash LazyColumn
+                    itemsIndexed(positions, key = { idx, item -> "${item.symbol}#$idx" }) { _, position ->
                         PositionCard(
                             position = position,
                             onSellClick = { onSellPosition(position) }
@@ -481,7 +483,8 @@ fun PaperTradingScreen(
                         }
                     }
                 }
-                items(filteredIdeas, key = { it.symbol }) { idea ->
+                // Index in key: same symbol twice must not crash LazyColumn
+                itemsIndexed(filteredIdeas, key = { idx, item -> "${item.symbol}#$idx" }) { _, idea ->
                     TradeIdeaCard(
                         idea = idea,
                         onTradeClick = { qty -> onExecuteTradeIdea(idea, qty) }
@@ -608,7 +611,7 @@ private fun ModelReportCardView(
                     ReportMetricCard(
                         title = "Strong-Signal Precision",
                         value = "${reportCard.precisionStrongBuy}%",
-                        sub = "When Confidence ≥ 55%",
+                        sub = "When Confidence >= 55%",
                         valueColor = AxeEmeraldGreen,
                         modifier = Modifier.weight(1f)
                     )
@@ -622,7 +625,7 @@ private fun ModelReportCardView(
                 ) {
                     ReportMetricCard(
                         title = "Long / Short Pick Spread",
-                        value = "+${reportCard.pickSpreadBps} bps",
+                        value = "${if (reportCard.pickSpreadBps >= 0) "+" else ""}${reportCard.pickSpreadBps} bps",
                         sub = "Alpha Over Market Drift",
                         valueColor = AxePrimaryCyan,
                         modifier = Modifier.weight(1f)
@@ -697,7 +700,7 @@ private fun ModelReportCardView(
 
                 // Feature Group Breakdown
                 Text(
-                    text = "Feature Architecture (49 V2 Quant Signals):",
+                    text = "Feature Architecture (${reportCard.featuresCount} V2 Quant Signals):",
                     color = AxeTextMuted,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Medium
@@ -1007,7 +1010,14 @@ private fun TradeIdeaCard(
                         )
                     }
                     Spacer(modifier = Modifier.height(2.dp))
-                    Text("Acc: ${idea.accuracy}%", color = AxeAmber, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    // 0.0 accuracy = unvalidated on-device — never render it
+                    // as a measured "0.0%".
+                    Text(
+                        text = idea.accuracy.takeIf { it > 0 }?.let { "Acc: $it%" } ?: "Unvalidated",
+                        color = if (idea.accuracy > 0) AxeAmber else AxeTextMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
 

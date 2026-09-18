@@ -51,6 +51,10 @@ import com.aistudio.axewatch.trader.ui.theme.AxeRoseRed
 import com.aistudio.axewatch.trader.ui.theme.AxeTextMuted
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
 import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
+import com.aistudio.axewatch.trader.ui.theme.OnPrimaryDark
+
+/** "-" when the feed reported no subscription for a category. */
+private fun subText(value: Double): String = if (value > 0) "${"%,.1f".format(value)}x" else "—"
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -63,8 +67,10 @@ fun IpoCalculatorDialog(
 
     val basePrice = ipo.issuePrice
     val lotSize = ipo.lotSize
-    val totalShares = lots * lotSize
-    val totalInvestment = totalShares * basePrice
+    // 0 means the feed did not supply it: no maths may be presented as a result.
+    val hasLotData = lotSize > 0 && basePrice > 0
+    val totalShares = if (hasLotData) lots * lotSize else 0
+    val totalInvestment = if (hasLotData) totalShares * basePrice else 0.0
     val gmpPerShare = ipo.gmpAmount
     val totalProfit = totalShares * gmpPerShare
     val totalListingValue = totalInvestment + totalProfit
@@ -122,16 +128,30 @@ fun IpoCalculatorDialog(
             ) {
                 Column {
                     Text("Issue Price", color = AxeTextMuted, fontSize = 10.sp)
-                    Text("₹${"%,.0f".format(basePrice)}", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(
+                        text = if (basePrice > 0) "₹${"%,.0f".format(basePrice)}" else "—",
+                        color = if (basePrice > 0) AxeTextPrimary else AxeTextMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 Column {
                     Text("Lot Size", color = AxeTextMuted, fontSize = 10.sp)
-                    Text("$lotSize shares", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Text(
+                        text = if (lotSize > 0) "$lotSize shares" else "—",
+                        color = if (lotSize > 0) AxeTextPrimary else AxeTextMuted,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
                 Column {
                     Text("Live GMP", color = AxeTextMuted, fontSize = 10.sp)
                     Text(
-                        text = "+₹$gmpPerShare ($gmpPercent%)",
+                        text = when {
+                            gmpPerShare > 0 -> "+₹$gmpPerShare ($gmpPercent%)"
+                            gmpPerShare < 0 -> "-₹${kotlin.math.abs(gmpPerShare)} ($gmpPercent%)"
+                            else -> "—"
+                        },
                         color = if (gmpPerShare >= 0) AxeEmeraldGreen else AxeRoseRed,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
@@ -150,12 +170,18 @@ fun IpoCalculatorDialog(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                val presets = listOf(
-                    Pair("1 Lot (RII)", 1),
-                    Pair("2 Lots", 2),
-                    Pair("14 Lots (sHNI)", 14),
-                    Pair("67 Lots (bHNI)", 67)
-                )
+            val lotValue = if (hasLotData) basePrice * lotSize else 0.0
+                val presets = buildList {
+                    add(Pair("1 Lot (RII)", 1))
+                    add(Pair("2 Lots", 2))
+                    if (lotValue > 0) {
+                        // SEBI caps are rupee thresholds, so lot counts differ per issue.
+                        val shniLots = kotlin.math.ceil(200_000.0 / lotValue).toInt().coerceAtLeast(2)
+                        val bhniLots = kotlin.math.ceil(1_000_000.0 / lotValue).toInt().coerceAtLeast(shniLots + 1)
+                        add(Pair("$shniLots Lots (sHNI > ₹2L)", shniLots))
+                        add(Pair("$bhniLots Lots (bHNI > ₹10L)", bhniLots))
+                    }
+                }
                 presets.forEach { (label, count) ->
                     val isSel = lots == count
                     Box(
@@ -191,7 +217,13 @@ fun IpoCalculatorDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Total Lots: $lots (${totalShares} shares)", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                Text(
+                    text = if (hasLotData) "Total Lots: $lots (${totalShares} shares)"
+                           else "Lot size unavailable — cannot compute shares",
+                    color = if (hasLotData) AxeTextPrimary else AxeTextMuted,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(
@@ -199,7 +231,7 @@ fun IpoCalculatorDialog(
                             .size(32.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(AxeDarkSurfaceElevated)
-                            .clickable { if (lots > 1) lots-- },
+                                    .clickable(enabled = hasLotData) { if (lots > 1) lots-- },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.Remove, contentDescription = "Decrease", tint = AxeTextPrimary, modifier = Modifier.size(16.dp))
@@ -212,7 +244,7 @@ fun IpoCalculatorDialog(
                             .size(32.dp)
                             .clip(RoundedCornerShape(6.dp))
                             .background(AxeDarkSurfaceElevated)
-                            .clickable { if (lots < 100) lots++ },
+                                    .clickable(enabled = hasLotData) { if (lots < 100) lots++ },
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.Add, contentDescription = "Increase", tint = AxeTextPrimary, modifier = Modifier.size(16.dp))
@@ -237,7 +269,12 @@ fun IpoCalculatorDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text("Application Investment", color = AxeTextSecondary, fontSize = 12.sp)
-                        Text("₹${"%,.0f".format(totalInvestment)}", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = if (hasLotData) "₹${"%,.0f".format(totalInvestment)}" else "—",
+                            color = if (hasLotData) AxeTextPrimary else AxeTextMuted,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -246,10 +283,29 @@ fun IpoCalculatorDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Est. Listing Day Gain", color = AxeEmeraldGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         Text(
-                            text = "+₹${"%,.0f".format(totalProfit)} (+${"%,.1f".format(gmpPercent)}%)",
-                            color = AxeEmeraldGreen,
+                            text = if (totalProfit < 0) "Est. Listing Day Loss" else "Est. Listing Day Gain",
+                            color = when {
+                                totalProfit < 0 -> AxeRoseRed
+                                totalProfit > 0 -> AxeEmeraldGreen
+                                else -> AxeTextSecondary
+                            },
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+text = when {
+                                !hasLotData -> "—"
+                                totalProfit > 0 -> "+₹${"%,.0f".format(totalProfit)} (+${"%,.1f".format(gmpPercent)}%)"
+                                totalProfit < 0 -> "-₹${"%,.0f".format(kotlin.math.abs(totalProfit))} (${"%,.1f".format(gmpPercent)}%)"
+                                else -> "₹0 (0.0%)"
+                            },
+                            color = when {
+                                !hasLotData -> AxeTextMuted
+                                totalProfit > 0 -> AxeEmeraldGreen
+                                totalProfit < 0 -> AxeRoseRed
+                                else -> AxeTextSecondary
+                            },
                             fontSize = 15.sp,
                             fontWeight = FontWeight.ExtraBold
                         )
@@ -271,7 +327,12 @@ fun IpoCalculatorDialog(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text("Est. Total Listing Value", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                        Text("₹${"%,.0f".format(totalListingValue)}", color = AxePrimaryCyan, fontSize = 15.sp, fontWeight = FontWeight.ExtraBold)
+Text(
+                            text = if (hasLotData) "₹${"%,.0f".format(totalListingValue)}" else "—",
+                            color = if (hasLotData) AxePrimaryCyan else AxeTextMuted,
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
                     }
                 }
             }
@@ -306,9 +367,9 @@ fun IpoCalculatorDialog(
                     ) {
                         Text("ALLOTMENT CHANCES (RETAIL RII)", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         Text(
-                            text = when {
+text = when {
                                 !hasSubData -> "No subscription data yet"
-                                retailSub <= 1.0 -> "Guaranteed 100%"
+                                retailSub <= 1.0 -> "Full allotment likely"
                                 else -> "~1 in ${"%,.1f".format(retailSub)} bidders"
                             },
                             color = probColor,
@@ -319,21 +380,23 @@ fun IpoCalculatorDialog(
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Probability Gauge Bar
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(AxeDarkSurfaceElevated)
-                    ) {
+// Subscription-visibility bar — drawn only when a ratio actually exists.
+                    if (hasSubData) {
                         Box(
                             modifier = Modifier
-                                .fillMaxWidth((retailProb / 100.0).toFloat().coerceIn(0.02f, 1f))
+                                .fillMaxWidth()
                                 .height(6.dp)
                                 .clip(RoundedCornerShape(3.dp))
-                                .background(probColor)
-                        )
+                                .background(AxeDarkSurfaceElevated)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth((1.0 / retailSub).toFloat().coerceIn(0.02f, 1f))
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(probColor)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
@@ -342,17 +405,20 @@ fun IpoCalculatorDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("Retail: ${"%,.1f".format(retailSub)}x", color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                        Text("NII/HNI: ${"%,.1f".format(ipo.niiSub)}x", color = AxeTextSecondary, fontSize = 11.sp)
-                        Text("QIB: ${"%,.1f".format(ipo.qibSub)}x", color = AxeTextSecondary, fontSize = 11.sp)
-                        Text("Total: ${"%,.1f".format(ipo.totalSub)}x", color = AxePrimaryCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+Text("Retail: ${subText(retailSub)}", color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        Text("NII/HNI: ${subText(ipo.niiSub)}", color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("QIB: ${subText(ipo.qibSub)}", color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("Total: ${subText(ipo.totalSub)}", color = AxePrimaryCyan, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
 
                     Spacer(modifier = Modifier.height(6.dp))
 
                     Text(
-                        text = if (retailSub > 1.0) "Retail allotment is executed by randomized lottery computerized draw under SEBI rules."
-                               else "Bids at cut-off price are entitled to full firm allotment.",
+text = when {
+                            !hasSubData -> "—"
+                            retailSub <= 1.0 -> "Bids at cut-off price are entitled to full firm allotment."
+                            else -> "Retail allotment is executed by randomized lottery computerized draw under SEBI rules."
+                        },
                         color = AxeTextMuted,
                         fontSize = 10.sp
                     )
@@ -369,7 +435,7 @@ fun IpoCalculatorDialog(
                     .fillMaxWidth()
                     .height(44.dp)
             ) {
-                Text("Got It", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+Text("Got It", color = OnPrimaryDark, fontWeight = FontWeight.Bold, fontSize = 14.sp)
             }
         }
     }

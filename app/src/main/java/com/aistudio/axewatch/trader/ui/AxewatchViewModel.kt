@@ -11,6 +11,7 @@ import com.aistudio.axewatch.trader.data.local.entity.PaperAccountEntity
 import com.aistudio.axewatch.trader.data.local.entity.PaperOrderEntity
 import com.aistudio.axewatch.trader.data.local.entity.PaperPositionEntity
 import com.aistudio.axewatch.trader.data.local.entity.WatchlistEntity
+import com.aistudio.axewatch.trader.data.local.entity.maskMatches
 import com.aistudio.axewatch.trader.data.model.CandleBar
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
 import com.aistudio.axewatch.trader.data.model.GmpItem
@@ -136,7 +137,9 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     // Calculated Portfolio Summary
     val portfolioSummary: StateFlow<PortfolioSummary> = combine(holdings, stocks) { hList, sList ->
-        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice })
+        // 0.0 prices are unquoted seeds, not quotes: exclude so valuation
+        // falls back to buyPrice instead of fabricating a -100% P&L.
+        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
         var totalInvested = 0.0
         var currentValue = 0.0
         hList.forEach { h ->
@@ -168,7 +171,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     // Portfolio Concentration Insights
     val portfolioConcentration: StateFlow<PortfolioConcentration> = combine(holdings, stocks) { hList, sList ->
-        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice })
+        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
         repository.getPortfolioConcentration(hList, priceMap)
     }.stateIn(
         viewModelScope,
@@ -419,9 +422,10 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     /** Re-run a stored record's check (e.g. retry LOOKUP_FAILED). The full
      *  PAN is resolved from the vault by its masked form — records alone
-     *  can never re-identify it. */
+     *  can never re-identify it. maskMatches also accepts records stored in
+     *  the legacy "ABCDE****F" mask so old LOOKUP_FAILED rows stay retryable. */
     fun retryAllotment(record: AllotmentRecordEntity) {
-        val vault = savedPans.value.find { it.maskedPan == record.maskedPan }
+        val vault = savedPans.value.find { maskMatches(it.maskedPan, record.maskedPan) }
         if (vault == null) {
             emitMessage("That PAN is no longer in the vault — re-check from the form above")
             return

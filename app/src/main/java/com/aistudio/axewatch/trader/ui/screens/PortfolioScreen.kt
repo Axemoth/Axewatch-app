@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
@@ -102,8 +103,14 @@ fun PortfolioScreen(
     var selectedMfModal by remember { mutableStateOf<MutualFundScheme?>(null) }
     var mfCategoryFilter by remember { mutableStateOf("All") }
     var mfSearchQuery by remember { mutableStateOf("") }
+    var showSampleConfirm by remember { mutableStateOf(false) }
 
-    val priceMap = remember(stocks) { stocks.associateBy({ it.symbol }, { it.lastPrice }) }
+    // 0.0 = membership seed with no quote yet: absent from the map so every
+    // consumer falls back to buyPrice (valuation) or renders "—" (display),
+    // never computes against ₹0.
+    val priceMap = remember(stocks) {
+        stocks.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
+    }
 
     val filteredMutualFunds = remember(mutualFunds, mfCategoryFilter, mfSearchQuery) {
         val byCat = if (mfCategoryFilter == "All") {
@@ -289,19 +296,22 @@ fun PortfolioScreen(
                                 Text("Tap '+ Add' or 'CSV' above to record stock investments", color = AxeTextMuted, fontSize = 12.sp)
 
                                 Spacer(modifier = Modifier.height(16.dp))
-                                Button(
-                                    onClick = onSeedSampleHoldings,
-                                    colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
-                                    shape = RoundedCornerShape(8.dp)
+                                // Sample data must never be written silently — confirmation gate below
+                                OutlinedButton(
+                                    onClick = { showSampleConfirm = true },
+                                    shape = RoundedCornerShape(8.dp),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, AxeBorder),
+                                    colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeTextSecondary)
                                 ) {
-                                    Text("Load Sample Bluechip Portfolio", color = Color(0xFF0F172A), fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                    Text("Load Sample Bluechip Portfolio", color = AxeTextSecondary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                 }
                             }
                         }
                     }
                 } else {
                     items(holdings, key = { it.id }) { holding ->
-                        val curPrice = priceMap[holding.symbol] ?: holding.buyPrice
+                        val knownPrice = priceMap[holding.symbol]
+                        val curPrice = knownPrice ?: holding.buyPrice
                         val invValue = holding.quantity * holding.buyPrice
                         val curValue = holding.quantity * curPrice
                         val pnl = curValue - invValue
@@ -340,7 +350,10 @@ fun PortfolioScreen(
                                         fontSize = 11.sp
                                     )
                                     Text(
-                                        text = "LTP: ₹${"%,.2f".format(curPrice)} · Val: ₹${"%,.2f".format(curValue)}",
+                                        text = if (knownPrice != null)
+                                            "LTP: ₹${"%,.2f".format(knownPrice)} · Val: ₹${"%,.2f".format(curValue)}"
+                                        else
+                                            "LTP: — · Val: —",
                                         color = AxeTextMuted,
                                         fontSize = 10.sp
                                     )
@@ -348,24 +361,29 @@ fun PortfolioScreen(
 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Column(horizontalAlignment = Alignment.End) {
-                                        Text(
-                                            text = "${if (isPos) "+" else ""}₹${"%,.2f".format(pnl)}",
-                                            color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(if (isPos) AxeGreenSubtle else AxeRedSubtle)
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
+                                        if (knownPrice != null) {
                                             Text(
-                                                text = "${if (isPos) "+" else ""}${"%,.2f".format(pnlPct)}%",
+                                                text = "${if (isPos) "+" else ""}₹${"%,.2f".format(pnl)}",
                                                 color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
-                                                fontSize = 10.sp,
+                                                fontSize = 14.sp,
                                                 fontWeight = FontWeight.Bold
                                             )
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(if (isPos) AxeGreenSubtle else AxeRedSubtle)
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "${if (isPos) "+" else ""}${"%,.2f".format(pnlPct)}%",
+                                                    color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        } else {
+                                            // No live price: any P&L against buy price would be fabricated
+                                            Text("P&L: —", color = AxeTextMuted, fontSize = 14.sp)
                                         }
                                     }
 
@@ -490,7 +508,7 @@ fun PortfolioScreen(
                                 letterSpacing = 1.sp
                             )
                             Text(
-                                text = "Direct Growth · Zero Commission",
+                                text = "Direct & Regular plans · live NAV",
                                 color = AxePrimaryCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold
@@ -512,7 +530,7 @@ fun PortfolioScreen(
                         }
                     }
                 } else {
-                    items(filteredMutualFunds, key = { it.code }) { mf ->
+                    items(filteredMutualFunds.distinctBy { it.code }, key = { it.code }) { mf ->
                         val isPos = mf.dayChangePercent >= 0
                         Box(
                             modifier = Modifier
@@ -605,8 +623,8 @@ fun PortfolioScreen(
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("1Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
                                         Text(
-                                            text = "+${mf.return1Yr}%",
-                                            color = AxeEmeraldGreen,
+                                            text = "${if (mf.return1Yr >= 0) "+" else ""}${"%,.1f".format(mf.return1Yr)}%",
+                                            color = if (mf.return1Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -616,8 +634,8 @@ fun PortfolioScreen(
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text("3Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
                                         Text(
-                                            text = "+${mf.return3Yr}%",
-                                            color = AxeEmeraldGreen,
+                                            text = "${if (mf.return3Yr >= 0) "+" else ""}${"%,.1f".format(mf.return3Yr)}%",
+                                            color = if (mf.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
@@ -801,7 +819,9 @@ fun PortfolioScreen(
                         val sectorMap = holdings.groupBy { it.sector }.mapValues { (_, list) ->
                             list.sumOf { (priceMap[it.symbol] ?: it.buyPrice) * it.quantity }
                         }
-                        val total = summary.currentValue
+                        // Denominator must come from the same holdings set mapped above;
+                        // using summary.currentValue (which includes other assets) inflates the divisor and fakes the percentages.
+                        val total = sectorMap.values.sum()
 
                         Column(
                             modifier = Modifier
@@ -869,9 +889,9 @@ fun PortfolioScreen(
                         }
                     }
                 } else {
-                    items(watchlist, key = { it.symbol }) { item ->
-                        val curPrice = priceMap[item.symbol] ?: item.addedPrice
-                        val change = curPrice - item.addedPrice
+                    itemsIndexed(watchlist, key = { idx, item -> "${item.symbol}#$idx" }) { _, item ->
+                        val knownPrice = priceMap[item.symbol]
+                        val change = (knownPrice ?: item.addedPrice) - item.addedPrice
                         val isPos = change >= 0
 
                         Box(
@@ -893,12 +913,17 @@ fun PortfolioScreen(
                                 }
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Column(horizontalAlignment = Alignment.End) {
-                                        Text("₹${"%,.2f".format(curPrice)}", color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                        Text(
-                                            text = "${if (isPos) "▲ +" else "▼ "}${"%,.2f".format(change)}",
-                                            color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
-                                            fontSize = 10.sp
-                                        )
+                                        if (knownPrice != null) {
+                                            Text("₹${"%,.2f".format(knownPrice)}", color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                            Text(
+                                                text = "${if (isPos) "▲ +" else "▼ "}${"%,.2f".format(change)}",
+                                                color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
+                                                fontSize = 10.sp
+                                            )
+                                        } else {
+                                            // No live price fetched — show it honestly instead of echoing the added price
+                                            Text("LTP: —", color = AxeTextMuted, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                     IconButton(
                                         onClick = { onRemoveFromWatchlist(item.symbol) },
@@ -913,6 +938,41 @@ fun PortfolioScreen(
                 }
             }
         }
+    }
+
+    // Modal: Confirm sample-portfolio seeding (demo data must never be written silently)
+    if (showSampleConfirm) {
+        AlertDialog(
+            onDismissRequest = { showSampleConfirm = false },
+            containerColor = AxeDarkSurface,
+            title = {
+                Text("Add Sample Portfolio?", color = AxeTextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            },
+            text = {
+                Text(
+                    "This adds sample/demo holdings with fictional prices to your portfolio. You can delete them later from your holdings list.",
+                    color = AxeTextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onSeedSampleHoldings()
+                        showSampleConfirm = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan)
+                ) {
+                    Text("Add", color = Color(0xFF00363F), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSampleConfirm = false }) {
+                    Text("Cancel", color = AxeTextMuted)
+                }
+            }
+        )
     }
 
     // Modal: Edit Holding
@@ -1002,7 +1062,7 @@ fun PortfolioScreen(
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "Paste CSV lines with: symbol,name,assetType,quantity,buyPrice,sector",
+                        "Format: symbol,name,assetType,quantity,buyPrice,sector. Example row — replace with your own: TCS, Tata Consultancy, equity, 20, 3800.0, IT",
                         color = AxeTextMuted,
                         fontSize = 11.sp
                     )
@@ -1199,13 +1259,13 @@ fun SipWealthCalculator(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Text(
-                        text = "● Capital Invested (${(investedRatio * 100).toInt()}%)",
+                        text = "· Capital Invested (${(investedRatio * 100).toInt()}%)",
                         color = AxePrimaryCyan,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                     Text(
-                        text = "● Compounded Returns (${((1f - investedRatio) * 100).toInt()}%)",
+                        text = "· Compounded Returns (${((1f - investedRatio) * 100).toInt()}%)",
                         color = AxeEmeraldGreen,
                         fontSize = 9.sp,
                         fontWeight = FontWeight.SemiBold
@@ -1353,18 +1413,24 @@ fun SipWealthCalculator(
             }
         }
 
-        // Top Mutual Funds to Start this SIP
-        if (mutualFunds.isNotEmpty()) {
+        // Top funds for this SIP — ranked by a real, measurable metric (3Y CAGR), not a vague "top rated" label
+        val topFunds = mutualFunds.filter { it.return3Yr > 0 }.sortedByDescending { it.return3Yr }.take(3)
+        if (topFunds.isNotEmpty()) {
             Column {
                 Text(
-                    text = "TOP RATED FUNDS FOR THIS SIP",
+                    text = "TOP 3Y CAGR FUNDS",
                     color = AxeTextSecondary,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
+                Text(
+                    text = "By 3-year return",
+                    color = AxeTextMuted,
+                    fontSize = 9.sp
+                )
                 Spacer(modifier = Modifier.height(8.dp))
-                mutualFunds.take(3).forEach { fund ->
+                topFunds.forEach { fund ->
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -1386,13 +1452,21 @@ fun SipWealthCalculator(
                                 Text("${fund.category} · Exp: ${fund.expenseRatio}%", color = AxeTextMuted, fontSize = 10.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
-                                Text("+${fund.return3Yr}% 3Y", color = AxeEmeraldGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "${if (fund.return3Yr >= 0) "+" else ""}${"%,.1f".format(fund.return3Yr)}% 3Y",
+                                    color = if (fund.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 Text("Invest SIP →", color = AxePrimaryCyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                 }
             }
+        } else if (mutualFunds.isNotEmpty()) {
+            // Honest empty state: no fund currently carries a positive 3Y return figure
+            Text("No 3Y return data yet", color = AxeTextMuted, fontSize = 11.sp)
         }
     }
 }

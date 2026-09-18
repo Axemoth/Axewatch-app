@@ -32,6 +32,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ import com.aistudio.axewatch.trader.ui.theme.AxeRoseRed
 import com.aistudio.axewatch.trader.ui.theme.AxeTextMuted
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
 import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
+import kotlinx.coroutines.delay
 
 @Composable
 fun MarketScreen(
@@ -84,8 +86,10 @@ fun MarketScreen(
 
     val filteredStocks = remember(stocks, stockFilterTab, searchQuery, watchlistedSymbols) {
         val byTab = when (stockFilterTab) {
-            1 -> stocks.filter { it.isPositive }.sortedByDescending { it.percentChange }
-            2 -> stocks.filter { !it.isPositive }.sortedBy { it.percentChange }
+            // Gainers/Losers need a measured quote: unrefreshed rows carry
+            // 0.0 (percentChange 0.0 reads "positive") and would flood Gainers.
+            1 -> stocks.filter { it.lastPrice > 0 && it.isPositive }.sortedByDescending { it.percentChange }
+            2 -> stocks.filter { it.lastPrice > 0 && !it.isPositive }.sortedBy { it.percentChange }
             3 -> stocks.filter { watchlistedSymbols.contains(it.symbol) }
             else -> stocks
         }
@@ -93,18 +97,21 @@ fun MarketScreen(
         if (searchQuery.isBlank()) {
             byTab
         } else {
+            // Search composes with the active tab: start from the tab-filtered
+            // list, never from the raw universe (that silently ignored the
+            // Gainers/Losers/Watchlist tab while search text was present).
             val q = searchQuery.trim().lowercase()
-            if (q == "nifty 50" || q == "nifty") {
-                stocks
-            } else {
-                stocks.filter {
-                    it.symbol.lowercase().contains(q) ||
-                    it.name.lowercase().contains(q) ||
-                    it.sector.lowercase().contains(q)
-                }
+            byTab.filter {
+                it.symbol.lowercase().contains(q) ||
+                it.name.lowercase().contains(q) ||
+                it.sector.lowercase().contains(q)
             }
         }
     }
+
+    // LazyColumn keys must be unique and non-blank: a duplicate or blank
+    // symbol crashes the list with "Key ... was already used".
+    val listStocks = filteredStocks.filter { it.symbol.isNotBlank() }.distinctBy { it.symbol }
 
     val quickSearchChips = listOf("NIFTY 50", "BANK", "TATA", "RELIANCE", "IT", "AUTO", "PHARMA", "ADANI")
 
@@ -462,8 +469,8 @@ fun MarketScreen(
                             )
                         }
                         Text(
-                            text = "${filteredStocks.size} stocks",
-                            color = AxePrimaryCyan,
+                            text = if (listStocks.isEmpty() && searchQuery.isNotBlank()) "No matches for '${searchQuery.trim()}'" else "${listStocks.size} stocks",
+                            color = if (listStocks.isEmpty() && searchQuery.isNotBlank()) AxeTextMuted else AxePrimaryCyan,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -509,7 +516,7 @@ fun MarketScreen(
         }
 
         // Empty state for filters / search
-        if (filteredStocks.isEmpty()) {
+        if (listStocks.isEmpty()) {
             item {
                 Box(
                     modifier = Modifier
@@ -527,7 +534,7 @@ fun MarketScreen(
         }
 
         // Stock Rows
-        items(filteredStocks, key = { it.symbol }) { stock ->
+        items(listStocks, key = { it.symbol }) { stock ->
             StockListItem(
                 stock = stock,
                 isWatchlisted = watchlistedSymbols.contains(stock.symbol),
@@ -542,9 +549,11 @@ fun MarketScreen(
         val constituents = remember(idx.symbol) {
             IndexConstituentsProvider.getConstituentsForIndex(idx.symbol)
         }
-        IndexDetailModal(
+IndexDetailModal(
             index = idx,
             constituents = constituents,
+            // Prices come only from live quotes; the static provider has none.
+            liveQuotes = stocks.associateBy { it.symbol },
             onStockClick = { stockQuote ->
                 selectedIndexForModal = null
                 onStockClick(stockQuote)
@@ -608,7 +617,8 @@ private fun IndexCard(
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "₹${"%,.2f".format(index.lastPrice)}",
+                // Index levels are points, not rupees — no currency symbol.
+                text = "%,.2f".format(index.lastPrice),
                 color = AxeTextPrimary,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.ExtraBold
@@ -618,7 +628,7 @@ private fun IndexCard(
 
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = if (isBull) "▲ +${index.percentChange}%" else "▼ ${index.percentChange}%",
+                    text = if (isBull) "▲ +${index.percentChange}%" else "▼ ${kotlin.math.abs(index.percentChange)}%",
                     color = accentColor,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
@@ -659,6 +669,7 @@ private fun StockListItem(
 ) {
     val isBull = stock.isPositive
     val trendColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
+    // 0.0 = no live quote yet (static membership seed). Never render it as ₹0.00.
 
     Box(
         modifier = Modifier
@@ -706,7 +717,9 @@ private fun StockListItem(
                     maxLines = 1
                 )
                 Text(
-                    text = "Vol: ${stock.volume} · H: ₹${"%,.0f".format(stock.dayHigh)} L: ₹${"%,.0f".format(stock.dayLow)}",
+                    text = if (stock.lastPrice > 0)
+                        "Vol: ${stock.volume} · H: ₹${"%,.0f".format(stock.dayHigh)} L: ₹${"%,.0f".format(stock.dayLow)}"
+                    else "No live quote yet",
                     color = AxeTextMuted,
                     fontSize = 10.sp
                 )
@@ -716,8 +729,8 @@ private fun StockListItem(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(horizontalAlignment = Alignment.End) {
                     Text(
-                        text = "₹${"%,.2f".format(stock.lastPrice)}",
-                        color = AxeTextPrimary,
+                        text = if (stock.lastPrice > 0) "₹${"%,.2f".format(stock.lastPrice)}" else "—",
+                        color = if (stock.lastPrice > 0) AxeTextPrimary else AxeTextMuted,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -725,12 +738,16 @@ private fun StockListItem(
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(4.dp))
-                            .background(if (isBull) AxeGreenSubtle else AxeRedSubtle)
+                            .background(
+                                if (stock.lastPrice > 0) {
+                                    if (isBull) AxeGreenSubtle else AxeRedSubtle
+                                } else AxeDarkSurfaceElevated
+                            )
                             .padding(horizontal = 6.dp, vertical = 2.dp)
                     ) {
                         Text(
-                            text = "${if (isBull) "+" else ""}${stock.percentChange}%",
-                            color = trendColor,
+                            text = if (stock.lastPrice > 0) "${if (isBull) "+" else ""}${stock.percentChange}%" else "—",
+                            color = if (stock.lastPrice > 0) trendColor else AxeTextMuted,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -762,8 +779,19 @@ fun MarketStatusAndBreadthBar(
     onFilterLosers: () -> Unit
 ) {
     // Determine Market Open/Close based on Indian Market Hours (Mon-Fri 09:15 to 15:30 IST)
-    val isMarketOpen = remember {
+    // The verdict must follow wall-clock time: the old `remember { ... }` froze the
+    // verdict for the whole composition lifetime, so a card rendered before 09:15
+    // showed "MARKET CLOSED" all day. Re-check every 30 s.
+    var nowIst by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(30_000)
+            nowIst = System.currentTimeMillis()
+        }
+    }
+    val isMarketOpen = remember(nowIst) {
         val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("Asia/Kolkata"))
+        cal.timeInMillis = nowIst
         val day = cal.get(java.util.Calendar.DAY_OF_WEEK)
         val hour = cal.get(java.util.Calendar.HOUR_OF_DAY)
         val minute = cal.get(java.util.Calendar.MINUTE)
@@ -776,8 +804,12 @@ fun MarketStatusAndBreadthBar(
     val advances = stocks.count { it.percentChange > 0 }
     val declines = stocks.count { it.percentChange < 0 }
     val unchanged = total - advances - declines
-    val advancePct = if (total > 0) (advances.toFloat() / total.toFloat()) else 0.5f
-    val declinePct = if (total > 0) (declines.toFloat() / total.toFloat()) else 0.5f
+    // Breadth shares come from the real counts; guard the empty-universe case
+    // (everything 0 → every segment 0 → the bar renders empty, not fake red).
+    val breadthTotal = advances + declines + unchanged
+    val advancePct = if (breadthTotal > 0) advances.toFloat() / breadthTotal else 0f
+    val declinePct = if (breadthTotal > 0) declines.toFloat() / breadthTotal else 0f
+    val flatPct = if (breadthTotal > 0) unchanged.toFloat() / breadthTotal else 0f
     val adRatio = if (declines > 0) "%.2f".format(advances.toDouble() / declines.toDouble()) else "—"
 
     Box(
@@ -811,6 +843,11 @@ fun MarketStatusAndBreadthBar(
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 0.5.sp
                     )
+                    Text(
+                        text = " · holidays not accounted",
+                        color = AxeTextMuted,
+                        fontSize = 9.sp
+                    )
                 }
 
                 Text(
@@ -838,7 +875,7 @@ fun MarketStatusAndBreadthBar(
                 ) {
                     Text("Advances: ", color = AxeTextMuted, fontSize = 11.sp)
                     Text(
-                        text = "$advances (${(advancePct * 100).toInt()}%)",
+                        text = "$advances (${"%.0f".format(advancePct * 100)}%)",
                         color = AxeEmeraldGreen,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -858,7 +895,7 @@ fun MarketStatusAndBreadthBar(
                 ) {
                     Text("Declines: ", color = AxeTextMuted, fontSize = 11.sp)
                     Text(
-                        text = "$declines (${(declinePct * 100).toInt()}%)",
+                        text = "$declines (${"%.0f".format(declinePct * 100)}%)",
                         color = AxeRoseRed,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
@@ -868,7 +905,10 @@ fun MarketStatusAndBreadthBar(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Visual Breadth Progress Bar
+            // Visual Breadth Progress Bar — weight-based segments so each
+            // slice is proportional to its real count and a zero count
+            // naturally renders zero width (the old fillMaxWidth + fillMaxSize
+            // stack always painted the whole bar red, even with 0 declines).
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -879,16 +919,27 @@ fun MarketStatusAndBreadthBar(
                 if (advancePct > 0f) {
                     Box(
                         modifier = Modifier
+                            .weight(advancePct)
                             .fillMaxHeight()
-                            .fillMaxWidth(advancePct.coerceIn(0.02f, 0.98f))
                             .background(AxeEmeraldGreen)
                     )
                 }
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(AxeRoseRed)
-                )
+                if (declinePct > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(declinePct)
+                            .fillMaxHeight()
+                            .background(AxeRoseRed)
+                    )
+                }
+                if (flatPct > 0f) {
+                    Box(
+                        modifier = Modifier
+                            .weight(flatPct)
+                            .fillMaxHeight()
+                            .background(AxeTextMuted)
+                    )
+                }
             }
         }
     }

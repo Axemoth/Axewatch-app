@@ -34,6 +34,7 @@ import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurface
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurfaceElevated
 import com.aistudio.axewatch.trader.ui.theme.AxePrimaryCyan
+import com.aistudio.axewatch.trader.ui.theme.AxeRoseRed
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
 import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
 
@@ -44,9 +45,19 @@ fun AddHoldingDialog(
 ) {
     var symbol by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
-    var qtyText by remember { mutableStateOf("10") }
-    var priceText by remember { mutableStateOf("1000") }
+    var qtyText by remember { mutableStateOf("") }
+    var priceText by remember { mutableStateOf("") }
     var sector by remember { mutableStateOf("Diversified") }
+    var qtyTouched by remember { mutableStateOf(false) }
+    var priceTouched by remember { mutableStateOf(false) }
+
+    // No fabricated defaults: fields start empty and Save stays disabled until every input is real
+    val qtyVal = qtyText.toDoubleOrNull() ?: 0.0
+    val priceVal = priceText.toDoubleOrNull() ?: 0.0
+    val qtyValid = qtyVal > 0.0
+    val priceValid = priceVal > 0.0
+    val symbolValid = symbol.isNotBlank()
+    val inputsValid = symbolValid && qtyValid && priceValid
 
     Dialog(onDismissRequest = onDismiss) {
         Box(
@@ -105,8 +116,16 @@ fun AddHoldingDialog(
                 ) {
                     OutlinedTextField(
                         value = qtyText,
-                        onValueChange = { qtyText = it },
+                        onValueChange = { v ->
+                            // digits + single dot only — blocks negative signs and stray characters
+                            if (v.all { it.isDigit() || it == '.' }) qtyText = v
+                            qtyTouched = true
+                        },
                         label = { Text("Quantity", fontSize = 11.sp) },
+                        isError = qtyTouched && !qtyValid,
+                        supportingText = {
+                            if (qtyTouched && !qtyValid) Text("Enter quantity", color = AxeRoseRed, fontSize = 10.sp)
+                        },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -121,8 +140,16 @@ fun AddHoldingDialog(
 
                     OutlinedTextField(
                         value = priceText,
-                        onValueChange = { priceText = it },
+                        onValueChange = { v ->
+                            // digits + single dot only — blocks negative signs and stray characters
+                            if (v.all { it.isDigit() || it == '.' }) priceText = v
+                            priceTouched = true
+                        },
                         label = { Text("Buy Price (₹)", fontSize = 11.sp) },
+                        isError = priceTouched && !priceValid,
+                        supportingText = {
+                            if (priceTouched && !priceValid) Text("Enter price", color = AxeRoseRed, fontSize = 10.sp)
+                        },
                         singleLine = true,
                         modifier = Modifier.weight(1f),
                         colors = OutlinedTextFieldDefaults.colors(
@@ -169,10 +196,11 @@ fun AddHoldingDialog(
                     }
 
                     Button(
+                        enabled = inputsValid,
                         onClick = {
-                            val q = qtyText.toDoubleOrNull() ?: 1.0
+                            val q = qtyText.toDoubleOrNull() ?: 0.0
                             val p = priceText.toDoubleOrNull() ?: 0.0
-                            if (symbol.isNotBlank()) {
+                            if (q > 0 && p > 0 && symbol.isNotBlank()) {
                                 onAddHolding(symbol, name.ifBlank { symbol }, "Stock", q, p, sector.ifBlank { "Diversified" })
                                 onDismiss()
                             }

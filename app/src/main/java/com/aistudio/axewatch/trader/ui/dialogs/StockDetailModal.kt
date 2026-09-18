@@ -20,7 +20,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.filled.TrendingUp
@@ -58,6 +57,7 @@ import com.aistudio.axewatch.trader.ui.theme.AxeEmeraldGreen
 import com.aistudio.axewatch.trader.ui.theme.AxeGreenSubtle
 import com.aistudio.axewatch.trader.ui.theme.AxePrimaryCyan
 import com.aistudio.axewatch.trader.ui.theme.AxeRedSubtle
+import com.aistudio.axewatch.trader.ui.theme.OnPrimaryDark
 import com.aistudio.axewatch.trader.ui.theme.AxeRoseRed
 import com.aistudio.axewatch.trader.ui.theme.AxeTextMuted
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
@@ -80,7 +80,8 @@ fun StockDetailModal(
     val isBull = stock.isPositive
     val trendColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
     var alertPrice by remember { mutableStateOf<Double?>(null) }
-    var isAlertActive by remember { mutableStateOf(false) }
+    // NOTE: this is a local what-if calculator only. The app has no alert
+    // scheduler/notification worker, so the UI must never claim "ACTIVE".
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -118,15 +119,19 @@ fun StockDetailModal(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(horizontalAlignment = Alignment.End) {
+                        // 0.0 = no live quote — never ₹0.00.
+                        val hasQuote = stock.lastPrice > 0
                         Text(
-                            text = "₹${"%,.2f".format(stock.lastPrice)}",
-                            color = AxeTextPrimary,
+                            text = if (hasQuote) "₹${"%,.2f".format(stock.lastPrice)}" else "—",
+                            color = if (hasQuote) AxeTextPrimary else AxeTextMuted,
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = if (isBull) "▲ +${stock.percentChange}%" else "▼ ${stock.percentChange}%",
-                            color = trendColor,
+                            text = if (hasQuote) {
+                                if (isBull) "▲ +${stock.percentChange}%" else "▼ ${stock.percentChange}%"
+                            } else "—",
+                            color = if (hasQuote) trendColor else AxeTextMuted,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
@@ -175,7 +180,12 @@ fun StockDetailModal(
             ) {
                 Column {
                     Text("Day Range", color = AxeTextMuted, fontSize = 10.sp)
-                    Text("₹${"%,.0f".format(stock.dayLow)} — ₹${"%,.0f".format(stock.dayHigh)}", color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (stock.dayHigh > 0) "₹${"%,.0f".format(stock.dayLow)} — ₹${"%,.0f".format(stock.dayHigh)}" else "—",
+                        color = if (stock.dayHigh > 0) AxeTextPrimary else AxeTextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
                 Column {
                     Text("52W Range", color = AxeTextMuted, fontSize = 10.sp)
@@ -203,9 +213,13 @@ fun StockDetailModal(
             val wLow = stock.week52Low
             val wHigh = stock.week52High
             val curPrice = stock.lastPrice
-            val rangeProgress = if (wHigh != null && wLow != null && wHigh > wLow) {
-                ((curPrice - wLow) / (wHigh - wLow)).toFloat().coerceIn(0f, 1f)
-            } else 0.5f
+            val wLowV = wLow ?: 0.0
+            val wHighV = wHigh ?: 0.0
+            // Unknown range must not render a gauge with a pinned 50% marker.
+            val has52wRange = wHigh != null && wLow != null && wHighV > wLowV
+            val rangeProgress = if (has52wRange) {
+                ((curPrice - wLowV) / (wHighV - wLowV)).toFloat().coerceIn(0f, 1f)
+            } else 0f
             val pctFromHigh = if (wHigh != null && wHigh > 0) ((curPrice - wHigh) / wHigh) * 100 else null
             val pctFromLow = if (wLow != null && wLow > 0) ((curPrice - wLow) / wLow) * 100 else null
 
@@ -234,37 +248,45 @@ fun StockDetailModal(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Range track with marker
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(24.dp),
-                        contentAlignment = Alignment.CenterStart
-                    ) {
-                        // Background track
+                    // Range track with marker — omitted entirely when the range is unknown
+                    if (has52wRange) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(AxeDarkSurfaceElevated)
-                        )
-
-                        // Current price pin/marker
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth(rangeProgress.coerceIn(0.02f, 0.98f))
-                                .height(6.dp),
-                            contentAlignment = Alignment.CenterEnd
+                                .height(24.dp),
+                            contentAlignment = Alignment.CenterStart
                         ) {
+                            // Background track
                             Box(
                                 modifier = Modifier
-                                    .size(14.dp)
-                                    .clip(CircleShape)
-                                    .background(AxePrimaryCyan)
-                                    .border(2.dp, AxeDarkBg, CircleShape)
+                                    .fillMaxWidth()
+                                    .height(6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(AxeDarkSurfaceElevated)
                             )
+
+                            // Current price pin/marker
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(rangeProgress.coerceIn(0.02f, 0.98f))
+                                    .height(6.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(14.dp)
+                                        .clip(CircleShape)
+                                        .background(AxePrimaryCyan)
+                                        .border(2.dp, AxeDarkBg, CircleShape)
+                                )
+                            }
                         }
+                    } else {
+                        Text(
+                            text = "Range unavailable — gauge hidden",
+                            color = AxeTextMuted,
+                            fontSize = 11.sp
+                        )
                     }
 
                     Row(
@@ -291,13 +313,13 @@ fun StockDetailModal(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Interactive Price Target Alert Tool
+            // Local what-if price check (no monitoring exists — see state comment)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(10.dp))
                     .background(AxeDarkSurface)
-                    .border(1.dp, if (isAlertActive) AxePrimaryCyan.copy(alpha = 0.5f) else AxeBorder, RoundedCornerShape(10.dp))
+                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
                     .padding(12.dp)
             ) {
                 Column {
@@ -308,30 +330,26 @@ fun StockDetailModal(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Default.Notifications,
-                                contentDescription = "Price Alert",
-                                tint = if (isAlertActive) AxePrimaryCyan else AxeTextMuted,
+                                imageVector = Icons.Default.TrendingUp,
+                                contentDescription = "What-if price check",
+                                tint = AxeTextMuted,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("PRICE TARGET ALERT", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Text("WHAT-IF PRICE CHECK", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                         }
 
-                        if (isAlertActive) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(AxePrimaryCyan.copy(alpha = 0.2f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text("ACTIVE", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
+                        Text(
+                            text = if (stock.lastPrice > 0) "Local calculator — no alert is scheduled"
+                                   else "Quote unavailable — what-if needs a live price",
+                            color = AxeTextMuted,
+                            fontSize = 9.sp
+                        )
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    if (isAlertActive && alertPrice != null) {
+                    if (alertPrice != null) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -341,35 +359,39 @@ fun StockDetailModal(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val lastPrice = stock.lastPrice
+                            val target = alertPrice ?: 0.0
+                            val diffPct = if (lastPrice > 0) ((target - lastPrice) / lastPrice) * 100 else 0.0
                             Column {
                                 Text(
-                                    text = "Alert set at ₹${"%,.2f".format(alertPrice)}",
+                                    text = "Target: ₹${"%,.2f".format(target)}",
                                     color = AxeTextPrimary,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = if (alertPrice!! > stock.lastPrice) "Triggers when price rises by +${"%,.1f".format(((alertPrice!! - stock.lastPrice)/stock.lastPrice)*100)}%"
-                                           else "Triggers when price drops by ${"%,.1f".format(((alertPrice!! - stock.lastPrice)/stock.lastPrice)*100)}%",
+                                    text = if (lastPrice > 0) {
+                                        val direction = if (diffPct >= 0) "above" else "below"
+                                        "${"%,.1f".format(kotlin.math.abs(diffPct))}% $direction the current price of ₹${"%,.2f".format(lastPrice)}"
+                                    } else {
+                                        "Current price unavailable — cannot compute"
+                                    },
                                     color = AxeTextMuted,
                                     fontSize = 10.sp
                                 )
                             }
 
                             Button(
-                                onClick = {
-                                    isAlertActive = false
-                                    alertPrice = null
-                                },
+                                onClick = { alertPrice = null },
                                 colors = ButtonDefaults.buttonColors(containerColor = AxeRedSubtle),
                                 shape = RoundedCornerShape(6.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
                                 modifier = Modifier.height(28.dp)
                             ) {
-                                Text("Remove", color = AxeRoseRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                Text("Clear", color = AxeRoseRed, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                             }
                         }
-                    } else {
+                    } else if (stock.lastPrice > 0) {
                         // Preset target buttons
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -389,10 +411,7 @@ fun StockDetailModal(
                                         .weight(1f)
                                         .clip(RoundedCornerShape(6.dp))
                                         .background(AxeDarkSurfaceElevated)
-                                        .clickable {
-                                            alertPrice = target
-                                            isAlertActive = true
-                                        }
+                                        .clickable { alertPrice = target }
                                         .padding(vertical = 8.dp, horizontal = 4.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
@@ -414,8 +433,14 @@ fun StockDetailModal(
 
             // Quantitative Outlook (Axewatch Model)
             if (outlook != null) {
+                // Three-way: an absent signal is not a sell call.
                 val isBuy = outlook.signal.contains("BUY")
-                val signalColor = if (isBuy) AxeEmeraldGreen else AxeRoseRed
+                val isSell = outlook.signal.contains("SELL")
+                val signalColor = when {
+                    isBuy -> AxeEmeraldGreen
+                    isSell -> AxeRoseRed
+                    else -> AxeAmber
+                }
 
                 Box(
                     modifier = Modifier
@@ -449,13 +474,20 @@ fun StockDetailModal(
                                 Box(
                                     modifier = Modifier
                                         .clip(RoundedCornerShape(6.dp))
-                                        .background(if (isBuy) AxeGreenSubtle else AxeRedSubtle)
+                                        .background(
+                                            when {
+                                                isBuy -> AxeGreenSubtle
+                                                isSell -> AxeRedSubtle
+                                                else -> AxeAmber.copy(alpha = 0.14f)
+                                            }
+                                        )
                                         .padding(horizontal = 8.dp, vertical = 4.dp)
                                 ) {
                                     Text(outlook.signal, color = signalColor, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold)
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Score: ${outlook.score}/100", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                // Score domain is -100..+100, so a "/100" suffix would be wrong.
+                                Text("Score: ${outlook.score}", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
                             Text("Horizon: ~${outlook.estimatedDays} days", color = AxeTextSecondary, fontSize = 11.sp)
                         }
@@ -490,7 +522,7 @@ fun StockDetailModal(
                         // Model Factors
                         Text("Signal Drivers:", color = AxeTextMuted, fontSize = 10.sp)
                         outlook.reasons.forEach { reason ->
-                            Text("• $reason", color = AxeTextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
+                            Text("· $reason", color = AxeTextSecondary, fontSize = 11.sp, modifier = Modifier.padding(top = 2.dp))
                         }
                     }
                 }
@@ -508,11 +540,11 @@ fun StockDetailModal(
                     .height(48.dp)
                     .testTag("take_this_trade_button")
             ) {
-                Icon(Icons.Default.TrendingUp, contentDescription = null, tint = Color(0xFF00363F))
+                Icon(Icons.Default.TrendingUp, contentDescription = null, tint = OnPrimaryDark)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = "Take this Trade in Paper Trading",
-                    color = Color(0xFF00363F),
+                    color = OnPrimaryDark,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )

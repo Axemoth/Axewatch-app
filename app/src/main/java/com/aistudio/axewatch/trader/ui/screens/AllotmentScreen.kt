@@ -70,6 +70,8 @@ import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
 import com.aistudio.axewatch.trader.data.model.ipoSection
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
+import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
+import com.aistudio.axewatch.trader.ui.theme.OnPrimaryDark
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
@@ -215,7 +217,9 @@ fun AllotmentScreen(
                                     text = buildString {
                                         append("Registrar: ${currentIpo?.registrar ?: "Unknown"}")
                                         if ((currentIpo?.lotSize ?: 0) > 0) append(" · Lot: ${currentIpo?.lotSize} sh")
-                                        append(" · Price: ₹${currentIpo?.issuePrice?.toInt() ?: 0}")
+                                        val price = currentIpo?.issuePrice ?: 0.0
+                                        if (price > 0) append(" · Price: ₹${price.toInt()}")
+                                        else append(" · Price: —")
                                         if (!currentIpo?.allotmentDate.isNullOrBlank()) append(" · Allotment: ${currentIpo?.allotmentDate}")
                                     },
                                     color = AxePrimaryCyan,
@@ -330,16 +334,16 @@ fun AllotmentScreen(
                     ) {
                         if (checkBusy) {
                             CircularProgressIndicator(
-                                color = Color(0xFF00363F),
+                                color = OnPrimaryDark,
                                 strokeWidth = 2.dp,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Checking Registrar…", color = Color(0xFF00363F), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Checking Registrar…", color = OnPrimaryDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         } else {
-                            Icon(Icons.Default.Search, contentDescription = null, tint = Color(0xFF00363F), modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.Search, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Check Allotment Status", color = Color(0xFF00363F), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Check Allotment Status", color = OnPrimaryDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
@@ -483,7 +487,7 @@ fun AllotmentScreen(
                         shape = RoundedCornerShape(6.dp),
                         modifier = Modifier.fillMaxWidth().height(42.dp)
                     ) {
-                        Text("Save PAN to Vault", color = Color(0xFF00363F), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Save PAN to Vault", color = OnPrimaryDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
 
@@ -864,9 +868,17 @@ fun AllotmentScreen(
     // Modal: Record Manual Allotment Status
     if (showManualRecordDialog) {
         var mPan by remember { mutableStateOf(panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }) }
-        var mStatus by remember { mutableStateOf("ALLOTTED") }
-        var mShares by remember { mutableStateOf(currentIpo?.lotSize?.toString() ?: "50") }
+        // Default to the honest "results not out yet" — pre-ticking ALLOTTED
+        // made it far too easy to log a fabricated allotment.
+        var mStatus by remember { mutableStateOf("RESULTS_NOT_OUT") }
+        // Shares start empty: the previous lotSize/"50" defaults invited
+        // saving a plausible-looking but wrong share count.
+        var mShares by remember { mutableStateOf("") }
         var mAppNo by remember { mutableStateOf("") }
+
+        val panValid = IpoAllotmentService.isValidPan(mPan)
+        val sharesValid = mStatus != "ALLOTTED" || (mShares.toIntOrNull() ?: 0) > 0
+        val canSave = panValid && sharesValid && currentIpo != null
 
         AlertDialog(
             onDismissRequest = { showManualRecordDialog = false },
@@ -894,6 +906,14 @@ fun AllotmentScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+
+                    if (!panValid) {
+                        Text(
+                            "Enter a valid PAN (ABCDE1234F)",
+                            color = AxeRoseRed,
+                            fontSize = 10.sp
+                        )
+                    }
 
                     // Status Options (All 4 distinct states)
                     Text("Allotment Status:", color = AxeTextSecondary, fontSize = 11.sp)
@@ -951,6 +971,13 @@ fun AllotmentScreen(
                             ),
                             modifier = Modifier.fillMaxWidth()
                         )
+                        if (!sharesValid) {
+                            Text(
+                                "Enter allotted shares",
+                                color = AxeRoseRed,
+                                fontSize = 10.sp
+                            )
+                        }
                     }
 
                     OutlinedTextField(
@@ -973,16 +1000,19 @@ fun AllotmentScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (mPan.isNotBlank() && currentIpo != null) {
-                            val masked = if (mPan.length >= 10) "${mPan.take(5)}****${mPan.takeLast(1)}" else "*****"
-                            val shares = if (mStatus == "ALLOTTED") mShares.toIntOrNull() ?: currentIpo.lotSize else 0
+                        if (currentIpo != null) {
+                            // Mask via the single compliant formatter — the
+                            // inline "take(5)" copy leaked 5 PAN characters.
+                            val masked = IpoAllotmentService.maskPan(mPan)
+                            val shares = if (mStatus == "ALLOTTED") mShares.toIntOrNull() ?: 0 else 0
                             onRecordManualAllotment(masked, currentIpo.symbol, mStatus, shares, mAppNo)
                             showManualRecordDialog = false
                         }
                     },
+                    enabled = canSave,
                     colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan)
                 ) {
-                    Text("Save Result", color = Color(0xFF00363F), fontWeight = FontWeight.Bold)
+                    Text("Save Result", color = OnPrimaryDark, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -1036,15 +1066,30 @@ private fun RegistrarHealthStrip(healthList: List<RegistrarSourceHealth>) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text("REGISTRAR CONNECTIVITY STATUS", color = AxeTextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(AxeEmeraldGreen)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("Live", color = AxeEmeraldGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+            // Honest header badge derived from measured health — the old
+            // hardcoded green "Live" claimed health even when a source was
+            // down or nothing had been measured yet.
+            val degraded = healthList.any { it.status == "DEGRADED" || it.status == "OFFLINE" }
+            val measured = healthList.filter { it.status != "IDLE" }
+            val allOperational = measured.isNotEmpty() && measured.all { it.status == "OPERATIONAL" }
+            if (measured.isNotEmpty()) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    val (badgeColor, badgeText) = when {
+                        degraded -> AxeAmber to "Degraded"
+                        allOperational -> AxeEmeraldGreen to "Live"
+                        // Mixed measured states (e.g. captcha handoff among
+                        // operational sources) — neither live nor degraded.
+                        else -> AxeTextMuted to "Partial"
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(badgeColor)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(badgeText, color = badgeColor, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
         Spacer(modifier = Modifier.height(6.dp))
@@ -1055,11 +1100,20 @@ private fun RegistrarHealthStrip(healthList: List<RegistrarSourceHealth>) {
         ) {
             items(healthList) { item ->
                 val isOp = item.status == "OPERATIONAL"
+                // CAPTCHA_HANDOFF is not a failure: the source is reachable
+                // but hands off to an official captcha-walled page — render
+                // it cyan, not amber-alarm.
+                val isCaptcha = item.status == "CAPTCHA_HANDOFF"
+                val chipColor = when {
+                    isOp -> AxeEmeraldGreen
+                    isCaptcha -> AxePrimaryCyan
+                    else -> AxeAmber
+                }
                 Row(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(AxeDarkSurface)
-                        .border(1.dp, if (isOp) AxeEmeraldGreen.copy(alpha = 0.3f) else AxeAmber.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
+                        .border(1.dp, chipColor.copy(alpha = 0.3f), RoundedCornerShape(6.dp))
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1067,11 +1121,14 @@ private fun RegistrarHealthStrip(healthList: List<RegistrarSourceHealth>) {
                         modifier = Modifier
                             .size(6.dp)
                             .clip(RoundedCornerShape(3.dp))
-                            .background(if (isOp) AxeEmeraldGreen else AxeAmber)
+                            .background(chipColor)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(item.name, color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                     Spacer(modifier = Modifier.width(4.dp))
+                    if (isCaptcha) {
+                        Text("Captcha handoff", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                    }
                     Text("${item.latencyMs}ms", color = AxeTextMuted, fontSize = 9.sp)
                 }
             }
