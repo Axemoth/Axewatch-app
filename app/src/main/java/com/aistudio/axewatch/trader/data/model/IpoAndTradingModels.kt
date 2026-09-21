@@ -141,6 +141,7 @@ data class PastIpoItem(
     // listingDate "" renders as "—". Never derive these from other columns.
     val currentPrice: Double = 0.0,
     val listingGainPercent: Double,
+    val currentGainPercent: Double = 0.0,
     val totalSub: Double = 0.0,
     val listingDate: String = ""
 )

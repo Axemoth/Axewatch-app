@@ -19,6 +19,8 @@ class IpoGmpService {
         private const val TAG = "IpoGmpService"
         private const val IPOWATCH_GMP_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
         private const val IPOWATCH_SUB_URL = "https://ipowatch.in/ipo-subscription-status-today/"
+        private const val INVESTORGAIN_SUB_URL = "https://www.investorgain.com/report/ipo-subscription-live/333/all/"
+        private const val INVESTORGAIN_PERF_URL = "https://www.investorgain.com/report/ipo-gmp-performance-tracker/377/all/"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 
         private val COLUMN_ALIASES = listOf(
@@ -44,6 +46,16 @@ class IpoGmpService {
             "close_date" to listOf("closing date", "close date", "close"),
             "type" to listOf("type", "category"),
             "name" to listOf("ipo", "company name", "company", "name")
+        )
+
+        private val PERF_COLUMN_ALIASES = listOf(
+            "name" to listOf("ipo", "company name", "name"),
+            "symbol" to listOf("symbol", "ticker"),
+            "listing_date" to listOf("listing date", "listing"),
+            "sub" to listOf("sub", "subscription"),
+            "price" to listOf("ipo price", "issue price", "price"),
+            "listing_price" to listOf("listing price"),
+            "current_price" to listOf("closing price (ltp)", "closing price", "ltp", "current price", "cmp")
         )
     }
 
@@ -93,6 +105,16 @@ class IpoGmpService {
      * Fetches past IPO listing performances with issue price, listing price, and listing day gain.
      */
     suspend fun fetchPastListings(): List<PastIpoItem> = withContext(Dispatchers.IO) {
+        try {
+            val list = fetchPastListingsFromInvestorGain()
+            if (list.isNotEmpty()) {
+                Log.d(TAG, "Successfully fetched ${list.size} past listings from InvestorGain")
+                return@withContext list
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error fetching past listings from InvestorGain: ${e.message}")
+        }
+
         try {
             val list = fetchPastListingsFromIpowatch()
             if (list.isNotEmpty()) {
@@ -251,6 +273,65 @@ class IpoGmpService {
     }
 
     private fun fetchLiveSubscriptions(): Map<String, LiveSubInfo> {
+        // Try InvestorGain first for granular SHNI / BHNI / NII / QIB / Retail breakdowns
+        try {
+            val igSubs = fetchLiveSubscriptionsFromInvestorGain()
+            if (igSubs.isNotEmpty()) {
+                Log.d(TAG, "Successfully fetched ${igSubs.size} live subscriptions from InvestorGain")
+                return igSubs
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error fetching live subscriptions from InvestorGain: ${e.message}")
+        }
+
+        // Resilient fallback to IPOWatch
+        return fetchLiveSubscriptionsFromIpowatch()
+    }
+
+    private fun fetchLiveSubscriptionsFromInvestorGain(): Map<String, LiveSubInfo> {
+        val request = Request.Builder()
+            .url(INVESTORGAIN_SUB_URL)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) return emptyMap()
+
+        val html = response.body?.string() ?: return emptyMap()
+        val tables = parseTables(html, SUB_COLUMN_ALIASES)
+        if (tables.isEmpty()) return emptyMap()
+
+        val subMap = mutableMapOf<String, LiveSubInfo>()
+        for (table in tables) {
+            for (row in table.rows) {
+                val rawName = row["name"] ?: continue
+                val clean = normalizeKey(cleanCompanyName(rawName))
+                if (clean.isBlank()) continue
+
+                val qib = parseNumber(row["qib"] ?: "0")
+                val nii = parseNumber(row["nii"] ?: "0")
+                val shni = parseNumber(row["shni"] ?: "0")
+                val bhni = parseNumber(row["bhni"] ?: "0")
+                val retail = parseNumber(row["retail"] ?: "0")
+                val total = parseNumber(row["total"] ?: "0")
+                val closeDate = row["close_date"] ?: ""
+
+                subMap[clean] = LiveSubInfo(
+                    qib = qib,
+                    nii = nii,
+                    shni = shni,
+                    bhni = bhni,
+                    retail = retail,
+                    total = total,
+                    closeDate = closeDate
+                )
+            }
+        }
+        return subMap
+    }
+
+    private fun fetchLiveSubscriptionsFromIpowatch(): Map<String, LiveSubInfo> {
         val request = Request.Builder()
             .url(IPOWATCH_SUB_URL)
             .header("User-Agent", USER_AGENT)
@@ -283,6 +364,69 @@ class IpoGmpService {
             }
         }
         return subMap
+    }
+
+    private fun fetchPastListingsFromInvestorGain(): List<PastIpoItem> {
+        val request = Request.Builder()
+            .url(INVESTORGAIN_PERF_URL)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) return emptyList()
+
+        val html = response.body?.string() ?: return emptyList()
+        val tables = parseTables(html, PERF_COLUMN_ALIASES)
+        if (tables.isEmpty()) return emptyList()
+
+        val pastList = mutableListOf<PastIpoItem>()
+        for (table in tables) {
+            for (row in table.rows.take(60)) {
+                val rawName = row["name"] ?: continue
+                val cleanName = cleanCompanyName(rawName)
+                if (cleanName.isBlank() || isHeaderNoise(cleanName)) continue
+
+                val issuePx = parseNumber(row["price"] ?: "0")
+                if (issuePx <= 0.0) continue
+
+                val listingPx = parseNumber(row["listing_price"] ?: "0")
+                val curPx = parseNumber(row["current_price"] ?: "0")
+                val sub = parseNumber(row["sub"] ?: "0")
+                val listingDate = row["listing_date"] ?: ""
+
+                val rawSym = row["symbol"] ?: ""
+                val sym = rawSym.split(",").firstOrNull()?.trim()
+                    ?.takeIf { it.isNotBlank() } ?: generateSymbol(cleanName)
+
+                val listingGainPct = if (issuePx > 0.0 && listingPx > 0.0) {
+                    (((listingPx - issuePx) / issuePx) * 100.0).roundToOneDecimal()
+                } else {
+                    0.0
+                }
+
+                val curGainPct = if (issuePx > 0.0 && curPx > 0.0) {
+                    (((curPx - issuePx) / issuePx) * 100.0).roundToOneDecimal()
+                } else {
+                    listingGainPct
+                }
+
+                pastList.add(
+                    PastIpoItem(
+                        symbol = sym,
+                        companyName = cleanName,
+                        issuePrice = issuePx,
+                        listingPrice = if (listingPx > 0.0) listingPx else issuePx,
+                        currentPrice = if (curPx > 0.0) curPx else (if (listingPx > 0.0) listingPx else issuePx),
+                        listingGainPercent = listingGainPct,
+                        currentGainPercent = curGainPct,
+                        totalSub = sub,
+                        listingDate = listingDate
+                    )
+                )
+            }
+        }
+        return pastList
     }
 
     private fun fetchPastListingsFromIpowatch(): List<PastIpoItem> {
@@ -329,10 +473,9 @@ class IpoGmpService {
                     companyName = cleanName,
                     issuePrice = issuePx,
                     listingPrice = listingPx,
-                    // Unknown unless the tracker published them: the UI renders
-                    // 0.0/"" as "—". Never derive these from other columns.
-                    currentPrice = 0.0,
+                    currentPrice = listingPx,
                     listingGainPercent = gainPct,
+                    currentGainPercent = gainPct,
                     totalSub = 0.0,
                     listingDate = ""
                 )
@@ -429,9 +572,18 @@ class IpoGmpService {
     }
 
     private fun cleanCompanyName(raw: String): String {
-        return raw.replace(Regex("<[^>]+>"), "")
+        var text = raw.replace(Regex("<[^>]+>"), " ")
             .replace("&amp;", "&")
+            .replace("&nbsp;", " ")
             .replace(Regex("(?i)\\b(Apply IPO|View Review|Details|RHP|DRHP)\\b"), "")
+            .trim()
+
+        val split = text.split(Regex("(?i)\\b(?:BSE SME|NSE SME|BSE|NSE|GMP:)\\b"))
+        if (split.isNotEmpty()) {
+            text = split[0]
+        }
+        return text.replace(Regex("(?i)SME$"), "")
+            .replace(Regex("\\s+"), " ")
             .trim()
     }
 

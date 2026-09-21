@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.local.entity.PaperAccountEntity
@@ -86,7 +87,7 @@ fun StocksScreen(
         ) {
             val tabs = listOf(
                 Pair("Market Overview", Icons.Default.ShowChart),
-                Pair("Paper Trading & Signals", Icons.Default.AccountBalanceWallet)
+                Pair("Paper & Signals", Icons.Default.AccountBalanceWallet)
             )
             tabs.forEachIndexed { index, (title, icon) ->
                 val selected = selectedSubTab == index
@@ -99,7 +100,10 @@ fun StocksScreen(
                         .padding(vertical = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 4.dp)
+                    ) {
                         Icon(
                             imageVector = icon,
                             contentDescription = null,
@@ -111,7 +115,9 @@ fun StocksScreen(
                             text = title,
                             color = if (selected) AxePrimaryCyan else AxeTextSecondary,
                             fontSize = 12.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

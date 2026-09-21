@@ -598,11 +598,31 @@ private fun IpoIssueCard(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        SubscriptionItem(label = "QIB", value = if (isPreBidding) "—" else if (ipo.qibSub > 0.0) "${ipo.qibSub}x" else "—", subText = if (isPreBidding) "Pre-apply" else null)
-                        SubscriptionItem(label = "NII", value = if (isPreBidding) "—" else if (ipo.niiSub > 0.0) "${ipo.niiSub}x" else "—", subText = if (isPreBidding) "Pre-apply" else null)
-                        SubscriptionItem(label = "sHNI", value = if (isPreBidding) "—" else if (ipo.shniSub > 0.0) "${ipo.shniSub}x" else "—", subText = if (isPreBidding) "Pre-apply" else null)
-                        SubscriptionItem(label = "bHNI", value = if (isPreBidding) "—" else if (ipo.bhniSub > 0.0) "${ipo.bhniSub}x" else "—", subText = if (isPreBidding) "Pre-apply" else null)
-                        SubscriptionItem(label = "Retail", value = if (isPreBidding) "—" else if (ipo.riiSub > 0.0) "${ipo.riiSub}x" else "—", subText = if (isPreBidding) "Pre-apply" else null)
+                        SubscriptionItem(
+                            label = "QIB",
+                            value = if (isPreBidding) "—" else if (ipo.qibSub > 0.0) "${ipo.qibSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else null
+                        )
+                        SubscriptionItem(
+                            label = "HNI",
+                            value = if (isPreBidding) "—" else if (ipo.niiSub > 0.0) "${ipo.niiSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else null
+                        )
+                        SubscriptionItem(
+                            label = "sHNI",
+                            value = if (isPreBidding) "—" else if (ipo.shniSub > 0.0) "${ipo.shniSub}x" else if (ipo.niiSub > 0.0 && isSme) "${ipo.niiSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else if (ipo.shniSub <= 0.0 && ipo.niiSub > 0.0 && isSme) "Combined" else null
+                        )
+                        SubscriptionItem(
+                            label = "bHNI",
+                            value = if (isPreBidding) "—" else if (ipo.bhniSub > 0.0) "${ipo.bhniSub}x" else if (ipo.niiSub > 0.0 && isSme) "${ipo.niiSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else if (ipo.bhniSub <= 0.0 && ipo.niiSub > 0.0 && isSme) "Combined" else null
+                        )
+                        SubscriptionItem(
+                            label = "Retail",
+                            value = if (isPreBidding) "—" else if (ipo.riiSub > 0.0) "${ipo.riiSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else null
+                        )
                     }
                 }
             }
@@ -770,7 +790,7 @@ private fun GmpBoardCard(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Rating: ${"★".repeat(gmp.fireRating)}",
+                        text = "Rating: ${"*".repeat(gmp.fireRating)}",
                         color = AxeAmber,
                         fontSize = 10.sp
                     )
@@ -812,8 +832,19 @@ private fun GmpBoardCard(
 
 @Composable
 private fun PastListingCard(past: PastIpoItem) {
-    val isProfit = past.listingGainPercent >= 0
-    val gainColor = if (isProfit) AxeEmeraldGreen else AxeRoseRed
+    val curGain = if (past.currentGainPercent != 0.0) {
+        past.currentGainPercent
+    } else if (past.issuePrice > 0.0 && past.currentPrice > 0.0) {
+        ((past.currentPrice - past.issuePrice) / past.issuePrice * 100.0)
+    } else {
+        past.listingGainPercent
+    }
+
+    val isListingProfit = past.listingGainPercent >= 0
+    val listingGainColor = if (isListingProfit) AxeEmeraldGreen else AxeRoseRed
+
+    val isCurProfit = curGain >= 0
+    val curGainColor = if (isCurProfit) AxeEmeraldGreen else AxeRoseRed
 
     Box(
         modifier = Modifier
@@ -830,14 +861,32 @@ private fun PastListingCard(past: PastIpoItem) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = past.companyName,
+                            color = AxeTextPrimary,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (past.symbol.isNotBlank()) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(AxeDarkSurfaceElevated)
+                                    .padding(horizontal = 5.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = past.symbol,
+                                    color = AxePrimaryCyan,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
                     Text(
-                        text = past.companyName,
-                        color = AxeTextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Listed: ${past.listingDate} · Sub: ${past.totalSub}x",
+                        text = "Listed: ${past.listingDate.ifBlank { "—" }} · Sub: ${if (past.totalSub > 0) "${past.totalSub}x" else "—"}",
                         color = AxeTextMuted,
                         fontSize = 11.sp
                     )
@@ -846,12 +895,12 @@ private fun PastListingCard(past: PastIpoItem) {
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
-                        .background(if (isProfit) AxeGreenSubtle else AxeRedSubtle)
+                        .background(if (isCurProfit) AxeGreenSubtle else AxeRedSubtle)
                         .padding(horizontal = 8.dp, vertical = 4.dp)
                 ) {
                     Text(
-                        text = if (isProfit) "▲ +${past.listingGainPercent}%" else "▼ ${kotlin.math.abs(past.listingGainPercent)}%",
-                        color = gainColor,
+                        text = if (isCurProfit) "▲ +${"%.2f".format(curGain)}%" else "▼ ${"%.2f".format(kotlin.math.abs(curGain))}%",
+                        color = curGainColor,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -862,24 +911,68 @@ private fun PastListingCard(past: PastIpoItem) {
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Issue: ₹${"%,.0f".format(past.issuePrice)}",
+                    text = "Issue: ₹${"%,.1f".format(past.issuePrice)}",
                     color = AxeTextMuted,
                     fontSize = 11.sp
                 )
                 Text(
-                    text = "Listing Open: ₹${"%,.0f".format(past.listingPrice)}",
+                    text = "Listing Open: ₹${"%,.1f".format(past.listingPrice)}",
                     color = AxeTextSecondary,
                     fontSize = 11.sp
                 )
                 Text(
-                    text = "Current: ₹${"%,.0f".format(past.currentPrice)}",
+                    text = "Current: ₹${"%,.1f".format(past.currentPrice)}",
                     color = AxePrimaryCyan,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Left side displays "Listing Gain", right side displays "Current Gain"
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(AxeDarkSurfaceElevated)
+                    .padding(horizontal = 8.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Listing Gain: ",
+                        color = AxeTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${if (isListingProfit) "+" else ""}${"%.2f".format(past.listingGainPercent)}%",
+                        color = listingGainColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Current Gain: ",
+                        color = AxeTextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "${if (isCurProfit) "+" else ""}${"%.2f".format(curGain)}%",
+                        color = curGainColor,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
@@ -161,10 +162,18 @@ fun MarketScreen(
                                 .weight(1f)
                                 .testTag("market_search_input"),
                             decorationBox = { innerTextField ->
-                                if (searchQuery.isEmpty()) {
-                                    Text("Search stocks, companies, sectors (e.g. Tata, HDFC)...", color = AxeTextMuted, fontSize = 13.sp)
+                                Box(contentAlignment = Alignment.CenterStart) {
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Search stocks, companies, sectors (e.g. Tata, HDFC)...",
+                                            color = AxeTextMuted,
+                                            fontSize = 13.sp,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    innerTextField()
                                 }
-                                innerTextField()
                             }
                         )
                         if (searchQuery.isNotEmpty()) {
@@ -434,7 +443,8 @@ fun MarketScreen(
                         text = pulseText,
                         color = AxeTextSecondary,
                         fontSize = 10.sp,
-                        maxLines = 1
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -828,7 +838,10 @@ fun MarketStatusAndBreadthBar(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Box(
                         modifier = Modifier
                             .size(8.dp)
@@ -841,20 +854,26 @@ fun MarketStatusAndBreadthBar(
                         color = if (isMarketOpen) AxeEmeraldGreen else AxeAmber,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.5.sp
+                        letterSpacing = 0.5.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Text(
                         text = " · holidays not accounted",
                         color = AxeTextMuted,
-                        fontSize = 9.sp
+                        fontSize = 9.sp,
+                        maxLines = 1
                     )
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
 
                 Text(
                     text = "A/D Ratio: ${adRatio}x",
                     color = if (advances >= declines) AxeEmeraldGreen else AxeRoseRed,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
             }
 
