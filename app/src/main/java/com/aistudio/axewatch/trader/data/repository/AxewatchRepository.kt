@@ -750,8 +750,13 @@ class AxewatchRepository(
             ipo.status.equals("Closed", ignoreCase = true) ||
             ipo.status.equals("Listed", ignoreCase = true) ||
             ipo.status.equals("Allotted", ignoreCase = true)
+        val reg = if (ipo.registrar.isNotBlank() && !ipo.registrar.equals("Unknown", ignoreCase = true)) {
+            ipo.registrar
+        } else {
+            attributeRegistrar(ipo.companyName, ipo.symbol).registrar
+        }
         val queryResult = allotmentService.queryAllotment(
-            cleanPan, ipo.symbol, ipo.companyName, ipo.status, remembered, declared
+            cleanPan, ipo.symbol, ipo.companyName, ipo.status, remembered, declared, reg
         )
 
         val sharesAllotted = queryResult.sharesAllotted

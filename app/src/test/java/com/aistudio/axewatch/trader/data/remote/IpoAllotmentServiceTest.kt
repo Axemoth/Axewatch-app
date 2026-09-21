@@ -236,5 +236,128 @@ class IpoAllotmentServiceTest {
         assertEquals("Not Applied", label("NOT_APPLIED"))
         assertEquals("Results Not Out Yet", label("RESULTS_NOT_OUT"))
         assertEquals("Lookup Failed — Retry", label("LOOKUP_FAILED"))
+        assertEquals("Manual Check Required", label("MANUAL_CHECK_REQUIRED"))
+        assertEquals("Manual Check Required", label("UNCOVERED"))
+    }
+
+    // ---- Manual check / CAPTCHA registrars (Bigshare, Skyline, etc.) ----
+
+    @Test
+    fun `Bigshare registrar query returns MANUAL_CHECK_REQUIRED`() = runBlocking {
+        val r = svc.queryAllotment(
+            pan = "ABCDE1234F",
+            ipoCompanyName = "Jindal Supreme (India) Limited",
+            ipoSymbol = "JINDAL",
+            ipoStatus = "Closed",
+            allotmentDeclared = true,
+            registrarHint = "Bigshare Services"
+        )
+        assertEquals("MANUAL_CHECK_REQUIRED", r.status)
+        assertEquals("Bigshare", r.source)
+        assertFalse(r.found)
+        assertTrue(r.note.contains("CAPTCHA"))
+    }
+
+    @Test
+    fun `manual registrars return MANUAL_CHECK_REQUIRED without network calls`() = runBlocking {
+        for (reg in listOf("Skyline Financial", "Cameo Corporate", "Maashitla Securities", "Purva Sharegistry", "Beetal Financial")) {
+            val r = svc.queryAllotment(
+                pan = "ABCDE1234F",
+                ipoCompanyName = "SME Issue",
+                ipoSymbol = "SME",
+                ipoStatus = "Closed",
+                allotmentDeclared = true,
+                registrarHint = reg
+            )
+            assertEquals("MANUAL_CHECK_REQUIRED", r.status)
+            assertFalse(r.found)
+            assertTrue(r.note.contains("official portal"))
+        }
+    }
+
+    @Test
+    fun `isManualCheck identifies MANUAL_CHECK_REQUIRED and UNCOVERED`() {
+        val r1 = AllotmentRecordEntity(
+            maskedPan = "AB*****F",
+            ipoSymbol = "JINDAL",
+            ipoName = "Jindal Supreme",
+            sharesApplied = 0,
+            sharesAllotted = 0,
+            status = "MANUAL_CHECK_REQUIRED",
+            registrar = "Bigshare"
+        )
+        assertTrue(r1.isManualCheck)
+        assertEquals("Manual Check Required", r1.statusLabel)
+
+        val r2 = r1.copy(status = "UNCOVERED")
+        assertTrue(r2.isManualCheck)
+        assertEquals("Manual Check Required", r2.statusLabel)
+
+        val r3 = r1.copy(status = "ALLOTTED")
+        assertFalse(r3.isManualCheck)
+    }
+
+    // ---- KFintech JSON payload parsing (SS Retail & similar) ----
+
+    @Test
+    fun `parseKfinJson parses allotted application for SS Retail`() {
+        val json = """
+            [
+                {
+                    "Company": "SS RETAIL LIMITED",
+                    "App_Shares": "1200",
+                    "All_Shares": "1200",
+                    "Appln_No": "KFIN998877",
+                    "Name": "RAHUL SHARMA"
+                }
+            ]
+        """.trimIndent()
+        val r = svc.parseKfinJson(json, "SS Retail")
+        assertTrue(r.found)
+        assertEquals("ALLOTTED", r.status)
+        assertEquals(1200, r.sharesApplied)
+        assertEquals(1200, r.sharesAllotted)
+        assertEquals("KFIN998877", r.applicationNo)
+        assertEquals("RAHU***", r.applicantName)
+    }
+
+    @Test
+    fun `parseKfinJson parses not allotted application for SS Retail`() {
+        val json = """
+            [
+                {
+                    "company": "SS RETAIL LIMITED",
+                    "app_shares": "1200",
+                    "all_shares": "0",
+                    "appln_no": "KFIN112233",
+                    "name": "PRIYA PATEL"
+                }
+            ]
+        """.trimIndent()
+        val r = svc.parseKfinJson(json, "SS Retail")
+        assertTrue(r.found)
+        assertEquals("NOT_ALLOTTED", r.status)
+        assertEquals(1200, r.sharesApplied)
+        assertEquals(0, r.sharesAllotted)
+        assertEquals("KFIN112233", r.applicationNo)
+        assertEquals("PRIY***", r.applicantName)
+    }
+
+    @Test
+    fun `parseKfinJson returns not found when company does not match`() {
+        val json = """
+            [
+                {
+                    "Company": "OTHER COMPANY LIMITED",
+                    "App_Shares": "500",
+                    "All_Shares": "500",
+                    "Appln_No": "12345",
+                    "Name": "SOME USER"
+                }
+            ]
+        """.trimIndent()
+        val r = svc.parseKfinJson(json, "SS Retail")
+        assertFalse(r.found)
+        assertEquals("NOT_APPLIED", r.status)
     }
 }

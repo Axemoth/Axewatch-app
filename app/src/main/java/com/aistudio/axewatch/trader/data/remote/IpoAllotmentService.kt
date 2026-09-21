@@ -200,7 +200,8 @@ class IpoAllotmentService {
         // date for this issue. Tracker statuses lag reality (an issue can
         // show "Active" after its basis is out) — a declared date always
         // wins and the registrars get queried.
-        allotmentDeclared: Boolean = false
+        allotmentDeclared: Boolean = false,
+        registrarHint: String = ""
     ): AllotmentQueryResult = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
 
@@ -236,10 +237,75 @@ class IpoAllotmentService {
             )
         }
 
+        val regLower = registrarHint.trim().lowercase()
+        val isBigshare = regLower.contains("bigshare")
+        val isOtherManual = regLower.contains("skyline") || regLower.contains("cameo") ||
+            regLower.contains("maashitla") || regLower.contains("purva") || regLower.contains("beetal")
+
+        // 2. Bigshare & other manual CAPTCHA-walled registrars
+        if (isBigshare || isOtherManual) {
+            val regName = if (isBigshare) "Bigshare" else registrarHint
+            val msg = if (isBigshare) {
+                "Handled by Bigshare — results declared. Official portal requires server CAPTCHA verification. Tap 'Open Portal' to check on Bigshare and log your outcome."
+            } else {
+                "Handled by $regName — official portal verification required. Tap 'Open Portal' to check on their official site and record your outcome."
+            }
+            return@withContext AllotmentQueryResult(
+                found = false,
+                source = regName,
+                companyName = ipoCompanyName,
+                sharesApplied = 0,
+                sharesAllotted = 0,
+                status = "MANUAL_CHECK_REQUIRED",
+                applicationNo = "",
+                applicantName = "",
+                note = msg
+            )
+        }
+
+        // 3. Known KFintech Issue (e.g. SS Retail)
+        val isKfin = regLower.contains("kfin")
+        if (isKfin) {
+            val t0 = System.currentTimeMillis()
+            try {
+                val kfinResult = checkKfinAllotment(cleanPan, ipoCompanyName)
+                onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
+                if (kfinResult.found) {
+                    return@withContext kfinResult
+                } else {
+                    return@withContext AllotmentQueryResult(
+                        found = false,
+                        source = "KFintech",
+                        companyName = ipoCompanyName,
+                        sharesApplied = 0,
+                        sharesAllotted = 0,
+                        status = "NOT_APPLIED",
+                        applicationNo = "N/A",
+                        applicantName = "",
+                        note = "Checked on KFintech: No application record found for PAN ${maskPan(cleanPan)} for $ipoCompanyName."
+                    )
+                }
+            } catch (e: Exception) {
+                onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
+                Log.w(TAG, "KFintech lookup failed: ${e.message}")
+                return@withContext AllotmentQueryResult(
+                    found = false,
+                    source = "KFintech",
+                    companyName = ipoCompanyName,
+                    sharesApplied = 0,
+                    sharesAllotted = 0,
+                    status = "LOOKUP_FAILED",
+                    applicationNo = "",
+                    applicantName = "",
+                    note = "Could not reach KFintech server (${e.message ?: "network error"}). Tap 'Open KFintech Portal' to check directly or record your outcome."
+                )
+            }
+        }
+
         var registrarCompanyFound = false
         var transportFailures = 0
 
-        // 2. Try MUFG Intime (Link Intime): live list first, remembered IDs
+        // 4. Try MUFG Intime (Link Intime): live list first, remembered IDs
         // for issues that rotated off the dropdown (SearchOnPan keeps
         // answering old IDs — verified live).
         try {
@@ -268,7 +334,7 @@ class IpoAllotmentService {
             Log.w(TAG, "MUFG query exception: ${e.message}")
         }
 
-        // 3. Try KFintech API
+        // 5. Try KFintech API if not already tried above
         try {
             val t0 = System.currentTimeMillis()
             try {
@@ -302,22 +368,26 @@ class IpoAllotmentService {
             )
         }
 
-        // 4. If neither registrar has published the company in their active database
+        // 6. If neither automated registrar has published the company in their active database
         if (!registrarCompanyFound) {
             return@withContext AllotmentQueryResult(
                 found = false,
-                source = "Official Registrar",
+                source = if (registrarHint.isNotBlank() && !registrarHint.equals("Unknown", ignoreCase = true)) registrarHint else "Official Registrar",
                 companyName = ipoCompanyName,
                 sharesApplied = 0,
                 sharesAllotted = 0,
-                status = "RESULTS_NOT_OUT",
+                status = if (allotmentDeclared) "UNCOVERED" else "RESULTS_NOT_OUT",
                 applicationNo = "N/A",
                 applicantName = "",
-                note = "Results are not out yet. The registrar has not finalized or uploaded the allotment basis for $ipoCompanyName."
+                note = if (allotmentDeclared) {
+                    "Automated coverage not confirmed for this IPO — use official portal links below for verification."
+                } else {
+                    "Results are not out yet. The registrar has not finalized or uploaded the allotment basis for $ipoCompanyName."
+                }
             )
         }
 
-        // 5. Company results are published on registrar, but PAN not found -> NOT_APPLIED
+        // 7. Company results are published on registrar, but PAN not found -> NOT_APPLIED
         AllotmentQueryResult(
             found = false,
             source = "Registrar Query",
@@ -404,6 +474,10 @@ class IpoAllotmentService {
                     .header("Referer", "https://ipostatus.kfintech.com/")
                     .header("Origin", "https://ipostatus.kfintech.com")
                     .header("Accept", "application/json, text/plain, */*")
+                    .header("access-control-allow-origin", "*")
+                    .header("sec-ch-ua", "\"Not=A?Brand\";v=\"99\", \"Chromium\";v=\"138\"")
+                    .header("sec-ch-ua-mobile", "?0")
+                    .header("sec-ch-ua-platform", "\"Android\"")
                     .header("reqparam", pan)
                     .header("client_id", "")
                     .get()
@@ -428,56 +502,7 @@ class IpoAllotmentService {
 
                 val body = response.body?.string()
                     ?: throw AllotmentTransportException("KFintech empty response")
-                val root = try {
-                    val t = body.trim()
-                    if (t.startsWith("[")) JSONArray(t)
-                    else JSONObject(t).optJSONArray("data")
-                        ?: JSONObject(t).optJSONArray("records")
-                        ?: JSONArray()
-                } catch (e: Exception) {
-                    throw AllotmentTransportException("KFintech bad payload")
-                }
-
-                var matchedApplied = 0
-                var matchedAllotted = 0
-                var matchedAppNo = ""
-                var matchedName = ""
-                for (i in 0 until root.length()) {
-                    val item = root.optJSONObject(i) ?: continue
-                    val comp = item.optString("Company", item.optString("company", ""))
-                    if (!ipoNamesMatch(comp, requestedCompanyName)) continue
-                    val appShares = parseShareCount(
-                        if (item.has("App_Shares")) item.get("App_Shares")
-                        else if (item.has("app_shares")) item.get("app_shares") else 0
-                    )
-                    val allShares = parseShareCount(
-                        if (item.has("All_Shares")) item.get("All_Shares")
-                        else if (item.has("all_shares")) item.get("all_shares") else 0
-                    )
-                    if (appShares <= 0 && allShares <= 0) continue
-                    matchedApplied += appShares
-                    matchedAllotted += allShares
-                    if (matchedAppNo.isEmpty()) {
-                        matchedAppNo = item.optString("Appln_No", item.optString("appln_no", ""))
-                        matchedName = item.optString("Name", item.optString("name", ""))
-                    }
-                }
-
-                if (matchedApplied > 0 || matchedAllotted > 0) {
-                    val isAllotted = matchedAllotted > 0
-                    return AllotmentQueryResult(
-                        found = true,
-                        source = "KFintech",
-                        companyName = requestedCompanyName,
-                        sharesApplied = matchedApplied,
-                        sharesAllotted = matchedAllotted,
-                        status = if (isAllotted) "ALLOTTED" else "NOT_ALLOTTED",
-                        applicationNo = matchedAppNo,
-                        applicantName = maskApplicantName(matchedName),
-                        note = if (isAllotted) "Allotted $matchedAllotted shares" else "Bid processed - Zero shares allotted"
-                    )
-                }
-                return notFoundResult(requestedCompanyName, "No matching bids found on KFintech")
+                return parseKfinJson(body, requestedCompanyName)
             } catch (e: AllotmentTransportException) {
                 transportError = e
                 Log.w(TAG, "KFintech transport failure (attempt ${attempt + 1}): ${e.message}")
@@ -489,6 +514,59 @@ class IpoAllotmentService {
         }
         transportError?.let { throw it }
         return notFoundResult(requestedCompanyName, "KFintech unreachable (HTTP $lastCode)")
+    }
+
+    internal fun parseKfinJson(body: String, requestedCompanyName: String): AllotmentQueryResult {
+        val root = try {
+            val t = body.trim()
+            if (t.startsWith("[")) JSONArray(t)
+            else JSONObject(t).optJSONArray("data")
+                ?: JSONObject(t).optJSONArray("records")
+                ?: JSONArray()
+        } catch (e: Exception) {
+            throw AllotmentTransportException("KFintech bad payload")
+        }
+
+        var matchedApplied = 0
+        var matchedAllotted = 0
+        var matchedAppNo = ""
+        var matchedName = ""
+        for (i in 0 until root.length()) {
+            val item = root.optJSONObject(i) ?: continue
+            val comp = item.optString("Company", item.optString("company", ""))
+            if (!ipoNamesMatch(comp, requestedCompanyName)) continue
+            val appShares = parseShareCount(
+                if (item.has("App_Shares")) item.get("App_Shares")
+                else if (item.has("app_shares")) item.get("app_shares") else 0
+            )
+            val allShares = parseShareCount(
+                if (item.has("All_Shares")) item.get("All_Shares")
+                else if (item.has("all_shares")) item.get("all_shares") else 0
+            )
+            if (appShares <= 0 && allShares <= 0) continue
+            matchedApplied += appShares
+            matchedAllotted += allShares
+            if (matchedAppNo.isEmpty()) {
+                matchedAppNo = item.optString("Appln_No", item.optString("appln_no", ""))
+                matchedName = item.optString("Name", item.optString("name", ""))
+            }
+        }
+
+        if (matchedApplied > 0 || matchedAllotted > 0) {
+            val isAllotted = matchedAllotted > 0
+            return AllotmentQueryResult(
+                found = true,
+                source = "KFintech",
+                companyName = requestedCompanyName,
+                sharesApplied = matchedApplied,
+                sharesAllotted = matchedAllotted,
+                status = if (isAllotted) "ALLOTTED" else "NOT_ALLOTTED",
+                applicationNo = matchedAppNo,
+                applicantName = maskApplicantName(matchedName),
+                note = if (isAllotted) "Allotted $matchedAllotted shares" else "Bid processed - Zero shares allotted"
+            )
+        }
+        return notFoundResult(requestedCompanyName, "No matching bids found on KFintech")
     }
 
     private fun encryptMufgToken(token: String): String {

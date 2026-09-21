@@ -58,6 +58,7 @@ data class AllotmentRecordEntity(
     // Transport failure is its own state: the registrar could not be
     // reached, which must never render as "Not Allotted".
     val isLookupFailed: Boolean get() = status == "LOOKUP_FAILED"
+    val isManualCheck: Boolean get() = status == "MANUAL_CHECK_REQUIRED" || status == "UNCOVERED"
 
     val statusLabel: String
         get() = when (status) {
@@ -66,6 +67,7 @@ data class AllotmentRecordEntity(
             "NOT_APPLIED" -> "Not Applied"
             "RESULTS_NOT_OUT", "AWAITING" -> "Results Not Out Yet"
             "LOOKUP_FAILED" -> "Lookup Failed — Retry"
+            "MANUAL_CHECK_REQUIRED", "UNCOVERED" -> "Manual Check Required"
             else -> status
         }
 }

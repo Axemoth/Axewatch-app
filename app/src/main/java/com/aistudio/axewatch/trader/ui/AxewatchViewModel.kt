@@ -410,7 +410,8 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     "NOT_ALLOTTED" -> "No allotment for ${record.ipoSymbol} — refund (if any) goes to your bank"
                     "NOT_APPLIED" -> "No application found for ${record.ipoSymbol} on this PAN"
                     "RESULTS_NOT_OUT" -> "Allotment for ${record.ipoSymbol} not finalized yet — try after the basis date"
-                    "LOOKUP_FAILED" -> "Could not reach the registrar for ${record.ipoSymbol} — check connection and retry"
+                    "LOOKUP_FAILED" -> "Could not reach the registrar for ${record.ipoSymbol} — check connection or use portal link"
+                    "MANUAL_CHECK_REQUIRED", "UNCOVERED" -> "Handled by ${record.registrar} — tap 'Open Portal' to check with CAPTCHA and record result"
                     else -> "Status for ${record.ipoSymbol}: ${record.status}"
                 }
             )
@@ -442,10 +443,12 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                 "No saved PANs in Vault to check"
             } else {
                 val by = records.groupingBy { it.status }.eachCount()
+                val manual = (by["MANUAL_CHECK_REQUIRED"] ?: 0) + (by["UNCOVERED"] ?: 0)
                 "Checked ${records.size} PANs for $ipoSymbol: " +
                     "${by["ALLOTTED"] ?: 0} allotted, " +
                     "${by["NOT_ALLOTTED"] ?: 0} not allotted, " +
                     "${by["NOT_APPLIED"] ?: 0} no application, " +
+                    (if (manual > 0) "$manual manual check, " else "") +
                     "${by["RESULTS_NOT_OUT"] ?: 0} pending, " +
                     "${by["LOOKUP_FAILED"] ?: 0} unreachable"
             }

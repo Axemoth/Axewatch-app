@@ -25,9 +25,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
@@ -56,8 +58,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -71,6 +75,7 @@ import com.aistudio.axewatch.trader.data.model.ipoSection
 import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
+import com.aistudio.axewatch.trader.data.model.findMatchingRegistrarLink
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 import com.aistudio.axewatch.trader.ui.theme.OnPrimaryDark
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
@@ -110,6 +115,7 @@ fun AllotmentScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     var selectedIpoSymbol by remember(initialSelectedSymbol) { mutableStateOf(initialSelectedSymbol) }
     // Smart default: most recent results-declared issue first, then most
     // recent closed, then whatever leads the feed. Re-evaluates as the
@@ -131,6 +137,8 @@ fun AllotmentScreen(
     var showIpoPickerModal by remember { mutableStateOf(false) }
     var showManualRecordDialog by remember { mutableStateOf(false) }
     var showConfirmClearDialog by remember { mutableStateOf(false) }
+    var manualRecordIpoSymbol by remember { mutableStateOf("") }
+    var manualRecordPan by remember { mutableStateOf("") }
 
     var recordFilterTab by remember { mutableStateOf(0) }
     var ipoSearchQuery by remember { mutableStateOf("") }
@@ -143,6 +151,7 @@ fun AllotmentScreen(
             2 -> records.filter { it.status == "NOT_ALLOTTED" }
             3 -> records.filter { it.status == "NOT_APPLIED" }
             4 -> records.filter { it.status == "RESULTS_NOT_OUT" || it.status == "AWAITING" }
+            5 -> records.filter { it.status == "MANUAL_CHECK_REQUIRED" || it.status == "UNCOVERED" }
             else -> records
         }
     }
@@ -369,9 +378,143 @@ fun AllotmentScreen(
                         }
                     }
 
+                    val currentRegistrar = currentIpo?.registrar ?: ""
+                    val isBigshare = currentRegistrar.contains("bigshare", ignoreCase = true)
+                    val isManualRegistrar = isBigshare ||
+                        currentRegistrar.contains("skyline", ignoreCase = true) ||
+                        currentRegistrar.contains("cameo", ignoreCase = true) ||
+                        currentRegistrar.contains("maashitla", ignoreCase = true) ||
+                        currentRegistrar.contains("purva", ignoreCase = true) ||
+                        currentRegistrar.contains("beetal", ignoreCase = true)
+                    val isKfin = currentRegistrar.contains("kfin", ignoreCase = true)
+                    val matchingRegistrarLink = if (currentIpo != null) findMatchingRegistrarLink(currentIpo.registrar, registrarLinks) else null
+
+                    if (isManualRegistrar && currentIpo != null) {
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AxeAmber.copy(alpha = 0.12f))
+                                .border(1.dp, AxeAmber.copy(alpha = 0.35f), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
+                        ) {
+                            Column {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.Info, contentDescription = null, tint = AxeAmber, modifier = Modifier.size(14.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "${if (isBigshare) "Bigshare" else currentIpo.registrar} · Captcha Required",
+                                            color = AxeAmber,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(AxeAmber.copy(alpha = 0.2f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Portal Only", color = AxeAmber, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Server CAPTCHA is enforced on ${if (isBigshare) "Bigshare" else currentIpo.registrar}. Open their official portal to verify with security code, then log your allotment result below.",
+                                    color = AxeTextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 15.sp
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    val portalUrl = matchingRegistrarLink?.url ?: if (isBigshare) "https://ipo.bigshareonline.com/ipo_status.html" else ""
+                                    if (portalUrl.isNotBlank()) {
+                                        OutlinedButton(
+                                            onClick = {
+                                                if (panInput.isNotBlank()) {
+                                                    clipboardManager.setText(AnnotatedString(panInput))
+                                                }
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(portalUrl))
+                                                context.startActivity(intent)
+                                            },
+                                            shape = RoundedCornerShape(6.dp),
+                                            colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
+                                            border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
+                                            modifier = Modifier.weight(1f).height(38.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                                contentDescription = null,
+                                                tint = AxeAmber,
+                                                modifier = Modifier.size(13.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text(
+                                                text = if (panInput.isNotBlank()) "Copy PAN & Open" else "Open Portal",
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            manualRecordIpoSymbol = currentIpo.symbol
+                                            manualRecordPan = panInput
+                                            showManualRecordDialog = true
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
+                                        modifier = Modifier.weight(1f).height(38.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(13.dp))
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Record Result", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (isKfin && currentIpo != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("Automated check active via KFintech · ", color = AxeTextMuted, fontSize = 10.sp)
+                            Text(
+                                text = "Open KFintech Portal",
+                                color = AxePrimaryCyan,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.clickable {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ipostatus.kfintech.com/"))
+                                    context.startActivity(intent)
+                                }
+                            )
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(6.dp))
                     TextButton(
-                        onClick = { showManualRecordDialog = true },
+                        onClick = {
+                            if (currentIpo != null) {
+                                manualRecordIpoSymbol = currentIpo.symbol
+                                manualRecordPan = panInput
+                            }
+                            showManualRecordDialog = true
+                        },
                         modifier = Modifier.align(Alignment.CenterHorizontally)
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, tint = AxeTextSecondary, modifier = Modifier.size(14.dp))
@@ -617,7 +760,7 @@ fun AllotmentScreen(
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        val tabs = listOf("All", "Allotted", "Not Allotted", "Not Applied", "Results Pending")
+                        val tabs = listOf("All", "Allotted", "Not Allotted", "Not Applied", "Results Pending", "Manual Check")
                         items(tabs.indices.toList()) { idx ->
                             val isSel = recordFilterTab == idx
                             Box(
@@ -665,6 +808,7 @@ fun AllotmentScreen(
                     "NOT_APPLIED" -> Triple(AxeDarkSurfaceElevated, AxeTextSecondary, "NOT APPLIED")
                     "RESULTS_NOT_OUT", "AWAITING" -> Triple(AxeAmber.copy(alpha = 0.18f), AxeAmber, "RESULTS NOT OUT")
                     "LOOKUP_FAILED" -> Triple(AxeAmber.copy(alpha = 0.18f), AxeAmber, "LOOKUP FAILED — RETRY")
+                    "MANUAL_CHECK_REQUIRED", "UNCOVERED" -> Triple(AxeAmber.copy(alpha = 0.18f), AxeAmber, "MANUAL CHECK")
                     else -> Triple(AxeDarkSurfaceElevated, AxeTextSecondary, record.status)
                 }
 
@@ -676,51 +820,119 @@ fun AllotmentScreen(
                         .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
                         .padding(12.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(record.ipoName, color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(record.maskedPan, color = AxeTextSecondary, fontSize = 11.sp)
-                            }
-                            Text("Registrar: ${record.registrar} · $time", color = AxeTextMuted, fontSize = 10.sp)
-                            Text("App No: ${record.applicationNo.ifBlank { "—" }}", color = AxeTextMuted, fontSize = 10.sp)
-                        }
-
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(badgeBg)
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = badgeLabel,
-                                    color = badgeColor,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            // One-tap retry for transport failures: resolves
-                            // the vault PAN by its masked form, so records
-                            // alone can never re-identify it.
-                            if (record.status == "LOOKUP_FAILED") {
-                                IconButton(
-                                    onClick = { onRetryRecord(record) },
-                                    modifier = Modifier.size(48.dp)
-                                ) {
-                                    Icon(Icons.Default.Refresh, contentDescription = "Retry lookup", tint = AxeAmber, modifier = Modifier.size(18.dp))
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(record.ipoName, color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(record.maskedPan, color = AxeTextSecondary, fontSize = 11.sp)
+                                }
+                                Text("Registrar: ${record.registrar} · $time", color = AxeTextMuted, fontSize = 10.sp)
+                                Text("App No: ${record.applicationNo.ifBlank { "—" }}", color = AxeTextMuted, fontSize = 10.sp)
+                                if (record.status == "MANUAL_CHECK_REQUIRED" || record.status == "UNCOVERED") {
+                                    Text(
+                                        text = "Server CAPTCHA enforced · Manual check needed on official portal",
+                                        color = AxeAmber,
+                                        fontSize = 10.sp
+                                    )
                                 }
                             }
-                            IconButton(
-                                onClick = { onDeleteRecord(record) },
-                                modifier = Modifier.size(48.dp)
+
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(badgeBg)
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = badgeLabel,
+                                        color = badgeColor,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                // One-tap retry for transport failures: resolves
+                                // the vault PAN by its masked form, so records
+                                // alone can never re-identify it.
+                                if (record.status == "LOOKUP_FAILED") {
+                                    IconButton(
+                                        onClick = { onRetryRecord(record) },
+                                        modifier = Modifier.size(48.dp)
+                                    ) {
+                                        Icon(Icons.Default.Refresh, contentDescription = "Retry lookup", tint = AxeAmber, modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { onDeleteRecord(record) },
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Icon(Icons.Default.Delete, contentDescription = "Delete record", tint = AxeTextMuted, modifier = Modifier.size(16.dp))
+                                }
+                            }
+                        }
+
+                        if (record.status == "MANUAL_CHECK_REQUIRED" || record.status == "UNCOVERED") {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            val portalLink = findMatchingRegistrarLink(record.registrar, registrarLinks)
+                            val portalUrl = portalLink?.url ?: if (record.registrar.contains("bigshare", ignoreCase = true)) {
+                                "https://ipo.bigshareonline.com/ipo_status.html"
+                            } else if (record.registrar.contains("kfin", ignoreCase = true)) {
+                                "https://ipostatus.kfintech.com/"
+                            } else ""
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete record", tint = AxeTextMuted, modifier = Modifier.size(16.dp))
+                                if (portalUrl.isNotBlank()) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            val vaultPan = savedPans.find { it.maskedPan == record.maskedPan }?.panNumber ?: ""
+                                            if (vaultPan.isNotBlank()) {
+                                                clipboardManager.setText(AnnotatedString(vaultPan))
+                                            }
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(portalUrl))
+                                            context.startActivity(intent)
+                                        },
+                                        shape = RoundedCornerShape(6.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
+                                        modifier = Modifier.height(32.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            tint = AxeAmber,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("Open Portal", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        manualRecordIpoSymbol = record.ipoSymbol
+                                        manualRecordPan = savedPans.find { it.maskedPan == record.maskedPan }?.panNumber ?: ""
+                                        showManualRecordDialog = true
+                                    },
+                                    shape = RoundedCornerShape(6.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
+                                    modifier = Modifier.height(32.dp),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                                ) {
+                                    Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(12.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Record Result", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
                     }
@@ -886,28 +1098,64 @@ fun AllotmentScreen(
 
     // Modal: Record Manual Allotment Status
     if (showManualRecordDialog) {
-        var mPan by remember { mutableStateOf(panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }) }
-        // Default to the honest "results not out yet" — pre-ticking ALLOTTED
-        // made it far too easy to log a fabricated allotment.
+        val targetIpo = remember(manualRecordIpoSymbol, selectedIpoSymbol, ipos) {
+            if (manualRecordIpoSymbol.isNotBlank()) {
+                ipos.find { it.symbol == manualRecordIpoSymbol } ?: currentIpo
+            } else {
+                currentIpo
+            }
+        }
+        var mPan by remember {
+            mutableStateOf(
+                if (manualRecordPan.isNotBlank() && IpoAllotmentService.isValidPan(manualRecordPan)) {
+                    manualRecordPan
+                } else {
+                    panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
+                }
+            )
+        }
         var mStatus by remember { mutableStateOf("RESULTS_NOT_OUT") }
-        // Shares start empty: the previous lotSize/"50" defaults invited
-        // saving a plausible-looking but wrong share count.
         var mShares by remember { mutableStateOf("") }
         var mAppNo by remember { mutableStateOf("") }
 
         val panValid = IpoAllotmentService.isValidPan(mPan)
         val sharesValid = mStatus != "ALLOTTED" || (mShares.toIntOrNull() ?: 0) > 0
-        val canSave = panValid && sharesValid && currentIpo != null
+        val canSave = panValid && sharesValid && targetIpo != null
 
         AlertDialog(
-            onDismissRequest = { showManualRecordDialog = false },
+            onDismissRequest = {
+                showManualRecordDialog = false
+                manualRecordIpoSymbol = ""
+                manualRecordPan = ""
+            },
             containerColor = AxeDarkSurface,
             title = {
                 Text("Record Allotment Status Manually", color = AxeTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("IPO: ${currentIpo?.companyName ?: "Selected Issue"}", color = AxePrimaryCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("IPO: ${targetIpo?.companyName ?: "Selected Issue"}", color = AxePrimaryCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+
+                    if (savedPans.isNotEmpty()) {
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(savedPans) { p ->
+                                val isSel = mPan == p.panNumber
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
+                                        .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(6.dp))
+                                        .clickable { mPan = p.panNumber }
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text("${p.maskedPan} (${p.holderName})", color = if (isSel) AxePrimaryCyan else AxeTextSecondary, fontSize = 10.sp)
+                                }
+                            }
+                        }
+                    }
 
                     OutlinedTextField(
                         value = mPan,
@@ -1019,13 +1267,15 @@ fun AllotmentScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (currentIpo != null) {
+                        if (targetIpo != null) {
                             // Mask via the single compliant formatter — the
                             // inline "take(5)" copy leaked 5 PAN characters.
                             val masked = IpoAllotmentService.maskPan(mPan)
                             val shares = if (mStatus == "ALLOTTED") mShares.toIntOrNull() ?: 0 else 0
-                            onRecordManualAllotment(masked, currentIpo.symbol, mStatus, shares, mAppNo)
+                            onRecordManualAllotment(masked, targetIpo.symbol, mStatus, shares, mAppNo)
                             showManualRecordDialog = false
+                            manualRecordIpoSymbol = ""
+                            manualRecordPan = ""
                         }
                     },
                     enabled = canSave,
@@ -1035,7 +1285,11 @@ fun AllotmentScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showManualRecordDialog = false }) {
+                TextButton(onClick = {
+                    showManualRecordDialog = false
+                    manualRecordIpoSymbol = ""
+                    manualRecordPan = ""
+                }) {
                     Text("Cancel", color = AxeTextMuted)
                 }
             }
