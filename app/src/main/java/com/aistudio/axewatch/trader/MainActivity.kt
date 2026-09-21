@@ -124,6 +124,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val tradeScanRunning by viewModel.tradeScanRunning.collectAsState()
     val tradeScanProgress by viewModel.tradeScanProgress.collectAsState()
     val registrarHealth by viewModel.registrarHealth.collectAsState()
+    val regDir by viewModel.regDir.collectAsState()
     val registrarLinks = viewModel.registrarLinks
 
     // Modals / Dialogs
@@ -214,6 +215,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     records = allotmentRecords,
                     healthList = registrarHealth,
                     registrarLinks = registrarLinks,
+                    regDir = regDir,
                     checkBusy = allotBusy,
                     onCheckAllotment = { pan, sym, holder ->
                         viewModel.checkAllotment(pan, sym, holder)

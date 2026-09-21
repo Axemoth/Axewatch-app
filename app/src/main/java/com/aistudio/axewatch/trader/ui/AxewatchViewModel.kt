@@ -28,6 +28,7 @@ import com.aistudio.axewatch.trader.data.model.SectorHeatmapItem
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeIdea
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
+import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
 import com.aistudio.axewatch.trader.data.repository.AxewatchRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -186,6 +187,10 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     val registrarHealth: StateFlow<List<RegistrarSourceHealth>> = repository.registrarHealth.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+    )
+
+    val regDir: StateFlow<Map<String, DirectoryEntry>> = repository.regDir.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), emptyMap()
     )
 
     val registrarLinks: List<RegistrarLink> = repository.getRegistrarLinks()

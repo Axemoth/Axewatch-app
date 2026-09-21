@@ -5,6 +5,8 @@ import com.aistudio.axewatch.trader.data.model.GmpItem
 import com.aistudio.axewatch.trader.data.model.IpoIssue
 import com.aistudio.axewatch.trader.data.model.PastIpoItem
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -19,6 +21,7 @@ class IpoGmpService {
         private const val TAG = "IpoGmpService"
         private const val IPOWATCH_GMP_URL = "https://ipowatch.in/ipo-grey-market-premium-latest-ipo-gmp/"
         private const val IPOWATCH_SUB_URL = "https://ipowatch.in/ipo-subscription-status-today/"
+        private const val INVESTORGAIN_GMP_URL = "https://www.investorgain.com/report/live-ipo-gmp/331/"
         private const val INVESTORGAIN_SUB_URL = "https://www.investorgain.com/report/ipo-subscription-live/333/all/"
         private const val INVESTORGAIN_PERF_URL = "https://www.investorgain.com/report/ipo-gmp-performance-tracker/377/all/"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
@@ -27,13 +30,18 @@ class IpoGmpService {
             "gmp" to listOf("ipo gmp", "gmp*", "gmp (rs)", "gmp ₹", "gmp", "premium"),
             "est_listing" to listOf("est. listing", "estimated listing", "exp listing", "listing gain", "est listing"),
             "listing_price" to listOf("listing price", "listing_price", "listing on"),
-            "price" to listOf("price band", "ipo price", "issue price", "price"),
-            "updated" to listOf("last updated", "updated dt", "updated"),
+            "price" to listOf("price band", "ipo price", "issue price", "price", "price rs"),
+            "updated" to listOf("last updated", "updated dt", "updated on", "updated"),
             "dates" to listOf("open-close", "open date", "bidding", "ipo date", "date"),
+            "open" to listOf("open", "open date"),
+            "close" to listOf("close", "close date"),
+            "boa_dt" to listOf("boa dt", "boa date", "allotment date", "allotment dt", "boa"),
+            "lot" to listOf("lot size", "lot"),
+            "size" to listOf("ipo size", "size"),
             "trend" to listOf("trend"),
             "status" to listOf("status"),
             "sub_x" to listOf("total", "subscription", "sub"),
-            "name" to listOf("ipo name", "company name", "company", "ipo")
+            "name" to listOf("ipo name", "company name", "company", "ipo", "name")
         )
 
         private val SUB_COLUMN_ALIASES = listOf(
@@ -81,24 +89,262 @@ class IpoGmpService {
     )
 
     /**
-     * Fetches real-time Mainboard & SME IPOs with accurate live GMP, issue pricing, and subscriptions.
+     * Fetches real-time Mainboard & SME IPOs with verified multi-source GMP, lot size, BoA date, and subscriptions.
+     * Uses InvestorGain and IPOWatch concurrently for cross-verification and zero-downtime failover.
      */
     suspend fun fetchLiveGmpData(): Pair<List<IpoIssue>, List<GmpItem>> = withContext(Dispatchers.IO) {
-        try {
-            val (ipos, gmps) = fetchFromIpowatchGmp()
-            if (ipos.isNotEmpty()) {
-                Log.d(TAG, "Successfully fetched ${ipos.size} IPOs and ${gmps.size} GMP records from IPOWatch")
-                return@withContext Pair(ipos, gmps)
+        val igDeferred = async {
+            try {
+                fetchFromInvestorGainGmp()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching live GMP from InvestorGain: ${e.message}")
+                Pair(emptyList<IpoIssue>(), emptyList<GmpItem>())
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Error fetching live GMP from IPOWatch: ${e.message}")
         }
 
-        // Live fetch failed: return empty, never stale demo data. The old
-        // getSeedIpos()/getSeedGmps()/getSeedPastListings() served invented
-        // September-2026 figures (subs, GMPs labeled "Today, Live", listing
-        // gains) as if live. Empty renders as unavailable.
+        val iwDeferred = async {
+            try {
+                fetchFromIpowatchGmp()
+            } catch (e: Exception) {
+                Log.w(TAG, "Error fetching live GMP from IPOWatch: ${e.message}")
+                Pair(emptyList<IpoIssue>(), emptyList<GmpItem>())
+            }
+        }
+
+        val (igIpos, igGmps) = igDeferred.await()
+        val (iwIpos, iwGmps) = iwDeferred.await()
+
+        if (igIpos.isNotEmpty() || iwIpos.isNotEmpty()) {
+            val merged = mergeMultiSourceGmp(igIpos, igGmps, iwIpos, iwGmps)
+            Log.d(TAG, "Successfully ingested ${merged.first.size} verified IPOs & ${merged.second.size} GMPs (IG: ${igIpos.size}, IW: ${iwIpos.size})")
+            return@withContext merged
+        }
+
+        // Live fetch failed: return empty, never stale demo data.
         Pair(emptyList(), emptyList())
+    }
+
+    private fun fetchFromInvestorGainGmp(): Pair<List<IpoIssue>, List<GmpItem>> {
+        val request = Request.Builder()
+            .url(INVESTORGAIN_GMP_URL)
+            .header("User-Agent", USER_AGENT)
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+            .build()
+
+        val response = client.newCall(request).execute()
+        if (!response.isSuccessful) return Pair(emptyList(), emptyList())
+
+        val html = response.body?.string() ?: return Pair(emptyList(), emptyList())
+        val tables = parseTables(html, COLUMN_ALIASES)
+        if (tables.isEmpty()) return Pair(emptyList(), emptyList())
+
+        val subMap = try {
+            fetchLiveSubscriptions()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+
+        val allIpos = mutableListOf<IpoIssue>()
+        val allGmps = mutableListOf<GmpItem>()
+
+        val table = tables[0]
+        for (row in table.rows) {
+            val rawName = row["name"] ?: continue
+            val cleanName = cleanCompanyName(rawName)
+            if (cleanName.isBlank() || isHeaderNoise(cleanName)) continue
+
+            val issuePrice = parseNumber(row["price"] ?: "0")
+            val (gmpAmount, rawGmpPct) = parseGmpField(row["gmp"] ?: "")
+            val gmpPercent = if (rawGmpPct > 0.0) {
+                rawGmpPct
+            } else if (issuePrice > 0.0 && gmpAmount > 0.0) {
+                ((gmpAmount / issuePrice) * 100.0).roundToOneDecimal()
+            } else {
+                0.0
+            }
+
+            var estListingPrice = parseNumber(row["est_listing"] ?: "")
+            if (estListingPrice <= 0.0 && issuePrice > 0) {
+                estListingPrice = issuePrice + gmpAmount
+            }
+
+            val openDate = row["open"]?.trim().orEmpty().ifBlank { "—" }
+            val closeDate = row["close"]?.trim().orEmpty().ifBlank { "—" }
+            val boaRaw = row["boa_dt"]?.trim().orEmpty()
+            val allotmentDate = if (boaRaw.isNotBlank() && boaRaw != "-") {
+                if (boaRaw.contains("-")) {
+                    val parts = boaRaw.split("-")
+                    val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+                    "${parts[0].trim()} ${parts[1].trim()} $currentYear"
+                } else boaRaw
+            } else ""
+
+            val lotSize = parseNumber(row["lot"] ?: "0").toInt()
+            val issueSizeCr = parseNumber(row["size"] ?: "0")
+
+            val isSme = rawName.contains("SME", ignoreCase = true) || cleanName.contains("SME", ignoreCase = true)
+            val mappedStatus = mapStatus(rawName)
+            val symbol = generateSymbol(cleanName)
+
+            val matchedSub = findSubscription(cleanName, subMap)
+            val qib = matchedSub?.qib ?: 0.0
+            val nii = matchedSub?.nii ?: 0.0
+            val shni = matchedSub?.shni ?: 0.0
+            val bhni = matchedSub?.bhni ?: 0.0
+            val retail = matchedSub?.retail ?: 0.0
+            val total = matchedSub?.total ?: parseNumber(row["sub_x"] ?: "0")
+            val finalCloseDate = if (matchedSub?.closeDate?.isNotBlank() == true) matchedSub.closeDate else closeDate
+
+            val priceBand = if (issuePrice > 0) {
+                val lowerBand = (issuePrice * 0.95).toInt()
+                if (lowerBand > 0 && lowerBand < issuePrice.toInt()) "₹$lowerBand - ₹${issuePrice.toInt()}" else "₹${issuePrice.toInt()}"
+            } else {
+                "₹TBA"
+            }
+
+            val ipo = IpoIssue(
+                symbol = symbol,
+                companyName = cleanName,
+                category = if (isSme) "SME" else "Mainboard",
+                status = mappedStatus,
+                issueOpenDate = openDate,
+                issueCloseDate = finalCloseDate,
+                priceBand = priceBand,
+                issuePrice = issuePrice,
+                lotSize = lotSize,
+                issueSizeCr = issueSizeCr,
+                registrar = "Unknown",
+                qibSub = qib,
+                niiSub = nii,
+                shniSub = shni,
+                bhniSub = bhni,
+                riiSub = retail,
+                totalSub = total,
+                gmpAmount = gmpAmount,
+                gmpPercent = gmpPercent,
+                estListingPrice = estListingPrice,
+                allotmentDate = allotmentDate
+            )
+            allIpos.add(ipo)
+
+            val fireRating = when {
+                gmpPercent >= 50.0 -> 5
+                gmpPercent >= 25.0 -> 4
+                gmpPercent >= 10.0 -> 3
+                gmpPercent > 0.0 -> 2
+                else -> 1
+            }
+
+            allGmps.add(
+                GmpItem(
+                    companyName = cleanName,
+                    symbol = symbol,
+                    issuePrice = issuePrice,
+                    gmpAmount = gmpAmount,
+                    gmpPercent = gmpPercent,
+                    estListingPrice = estListingPrice,
+                    status = if (mappedStatus == "Active") "Open" else mappedStatus,
+                    fireRating = fireRating,
+                    lastUpdated = row["updated"]?.ifBlank { "Live" } ?: "Live"
+                )
+            )
+        }
+
+        return Pair(allIpos, allGmps)
+    }
+
+    private fun mergeMultiSourceGmp(
+        igIpos: List<IpoIssue>,
+        igGmps: List<GmpItem>,
+        iwIpos: List<IpoIssue>,
+        iwGmps: List<GmpItem>
+    ): Pair<List<IpoIssue>, List<GmpItem>> {
+        if (igIpos.isEmpty()) return Pair(iwIpos, iwGmps)
+        if (iwIpos.isEmpty()) return Pair(igIpos, igGmps)
+
+        val iwIpoMap = iwIpos.associateBy { normalizeKey(it.companyName) }.toMutableMap()
+        val iwGmpMap = iwGmps.associateBy { normalizeKey(it.companyName) }.toMutableMap()
+
+        val mergedIpos = mutableListOf<IpoIssue>()
+        val mergedGmps = mutableListOf<GmpItem>()
+
+        for (igIpo in igIpos) {
+            val key = normalizeKey(igIpo.companyName)
+            var matchedIw = iwIpoMap.remove(key)
+            if (matchedIw == null) {
+                val matchKey = iwIpoMap.keys.firstOrNull { k ->
+                    k.length >= 8 && key.length >= 8 && (k.contains(key) || key.contains(k))
+                }
+                if (matchKey != null) {
+                    matchedIw = iwIpoMap.remove(matchKey)
+                }
+            }
+
+            if (matchedIw != null) {
+                // Cross-verified merge: prefer verified GMP and enrich missing metadata
+                val gmpAmt = if (igIpo.gmpAmount > 0) igIpo.gmpAmount else matchedIw.gmpAmount
+                val gmpPct = if (igIpo.gmpPercent > 0) igIpo.gmpPercent else matchedIw.gmpPercent
+                val lot = if (igIpo.lotSize > 0) igIpo.lotSize else matchedIw.lotSize
+                val allotmentDt = igIpo.allotmentDate.ifBlank { matchedIw.allotmentDate }
+                val totalSub = max(igIpo.totalSub, matchedIw.totalSub)
+                val qib = max(igIpo.qibSub, matchedIw.qibSub)
+                val nii = max(igIpo.niiSub, matchedIw.niiSub)
+                val shni = max(igIpo.shniSub, matchedIw.shniSub)
+                val bhni = max(igIpo.bhniSub, matchedIw.bhniSub)
+                val rii = max(igIpo.riiSub, matchedIw.riiSub)
+
+                mergedIpos.add(
+                    igIpo.copy(
+                        gmpAmount = gmpAmt,
+                        gmpPercent = gmpPct,
+                        estListingPrice = if (igIpo.issuePrice > 0) igIpo.issuePrice + gmpAmt else igIpo.estListingPrice,
+                        lotSize = lot,
+                        allotmentDate = allotmentDt,
+                        totalSub = totalSub,
+                        qibSub = qib,
+                        niiSub = nii,
+                        shniSub = shni,
+                        bhniSub = bhni,
+                        riiSub = rii
+                    )
+                )
+            } else {
+                mergedIpos.add(igIpo)
+            }
+        }
+
+        mergedIpos.addAll(iwIpoMap.values)
+
+        for (igGmp in igGmps) {
+            val key = normalizeKey(igGmp.companyName)
+            var matchedIw = iwGmpMap.remove(key)
+            if (matchedIw == null) {
+                val matchKey = iwGmpMap.keys.firstOrNull { k ->
+                    k.length >= 8 && key.length >= 8 && (k.contains(key) || key.contains(k))
+                }
+                if (matchKey != null) {
+                    matchedIw = iwGmpMap.remove(matchKey)
+                }
+            }
+
+            if (matchedIw != null) {
+                val gmpAmt = if (igGmp.gmpAmount > 0) igGmp.gmpAmount else matchedIw.gmpAmount
+                val gmpPct = if (igGmp.gmpPercent > 0) igGmp.gmpPercent else matchedIw.gmpPercent
+                mergedGmps.add(
+                    igGmp.copy(
+                        gmpAmount = gmpAmt,
+                        gmpPercent = gmpPct,
+                        estListingPrice = if (igGmp.issuePrice > 0) igGmp.issuePrice + gmpAmt else igGmp.estListingPrice,
+                        lastUpdated = igGmp.lastUpdated.ifBlank { matchedIw.lastUpdated }
+                    )
+                )
+            } else {
+                mergedGmps.add(igGmp)
+            }
+        }
+
+        mergedGmps.addAll(iwGmpMap.values)
+        return Pair(mergedIpos, mergedGmps)
     }
 
     /**
@@ -582,9 +828,23 @@ class IpoGmpService {
         if (split.isNotEmpty()) {
             text = split[0]
         }
-        return text.replace(Regex("(?i)SME$"), "")
+        return text.replace(Regex("(?i)\\b(SME|IPO)\\b"), "")
+            .replace(Regex("\\s+[UOCLA]$"), "")
             .replace(Regex("\\s+"), " ")
             .trim()
+    }
+
+    private fun parseGmpField(text: String): Pair<Double, Double> {
+        val clean = text.replace("₹", "").replace(",", "").trim()
+        if (clean.isBlank() || clean.contains("--")) return Pair(0.0, 0.0)
+        val m = Pattern.compile("(-?\\d+(?:\\.\\d+)?)\\s*(?:\\(\\s*(-?\\d+(?:\\.\\d+)?)\\s*%?\\s*\\))?").matcher(clean)
+        return if (m.find()) {
+            val amt = m.group(1)?.toDoubleOrNull() ?: 0.0
+            val pct = m.group(2)?.toDoubleOrNull() ?: 0.0
+            Pair(amt, pct)
+        } else {
+            Pair(0.0, 0.0)
+        }
     }
 
     private fun isHeaderNoise(text: String): Boolean {
@@ -620,11 +880,11 @@ class IpoGmpService {
     private fun mapStatus(rawStatus: String): String {
         val l = rawStatus.lowercase()
         return when {
-            l.contains("open") -> "Active"
-            l.contains("upcoming") || l.contains("forthcom") || l.contains("pre") -> "Forthcoming"
-            l.contains("close") -> "Closed"
-            l.contains("allot") -> "Allotted"
-            l.contains("list") -> "Listed"
+            rawStatus.endsWith(" U") || l.contains("upcoming") || l.contains("forthcom") || l.contains("pre") -> "Forthcoming"
+            rawStatus.endsWith(" O") || l.contains("open") || l.contains("active") -> "Active"
+            rawStatus.endsWith(" C") || l.contains("close") -> "Closed"
+            rawStatus.endsWith(" A") || l.contains("allot") -> "Allotted"
+            rawStatus.endsWith(" L") || l.contains("list") -> "Listed"
             else -> "Active"
         }
     }

@@ -67,4 +67,49 @@ class IpoDateHelpersTest {
         assertEquals("Active", ordered[1].status)
         assertEquals("Forthcoming", ordered[2].status)
     }
+
+    @Test
+    fun `allotment out on registrar detection gives green check badge`() {
+        val ipo = issue("Closed", date = "20 Sep 2026")
+        val bigshareDir = mapOf("X" to com.aistudio.axewatch.trader.data.remote.DirectoryEntry("bigshare", "X Co", "20 Sep 2026", true))
+        val mufgDir = mapOf("X" to com.aistudio.axewatch.trader.data.remote.DirectoryEntry("mufg", "X Co", "20 Sep 2026", true))
+
+        // Bigshare
+        val bigBadge = ipo.getAllotmentBadge(20260922L, bigshareDir)
+        org.junit.Assert.assertNotNull(bigBadge)
+        assertEquals("\u2713 Listed on Bigshare", bigBadge?.label)
+        org.junit.Assert.assertTrue(bigBadge?.isGreenCheck == true)
+        org.junit.Assert.assertTrue(ipo.isAllotmentOut(20260922L, bigshareDir))
+
+        // Link Intime
+        val mufgBadge = ipo.getAllotmentBadge(20260922L, mufgDir)
+        org.junit.Assert.assertNotNull(mufgBadge)
+        assertEquals("\u2713 Allotment Out", mufgBadge?.label)
+        org.junit.Assert.assertTrue(mufgBadge?.isGreenCheck == true)
+        org.junit.Assert.assertTrue(ipo.isAllotmentOut(20260922L, mufgDir))
+    }
+
+    @Test
+    fun `allotment today or scheduled date badges`() {
+        val ipoToday = issue("Closed", date = "22 Sep 2026")
+        val todayBadge = ipoToday.getAllotmentBadge(20260922L, emptyMap())
+        org.junit.Assert.assertNotNull(todayBadge)
+        assertEquals("\u2713 Allotment Today", todayBadge?.label)
+        org.junit.Assert.assertTrue(todayBadge?.isGreenCheck == true)
+        org.junit.Assert.assertTrue(ipoToday.isAllotmentDayOrAfter(20260922L, emptyMap()))
+
+        val ipoPast = issue("Closed", date = "21 Sep 2026")
+        val pastBadge = ipoPast.getAllotmentBadge(20260922L, emptyMap())
+        org.junit.Assert.assertNotNull(pastBadge)
+        assertEquals("\u2713 Results Declared", pastBadge?.label)
+        org.junit.Assert.assertTrue(pastBadge?.isGreenCheck == true)
+        org.junit.Assert.assertTrue(ipoPast.isAllotmentDayOrAfter(20260922L, emptyMap()))
+
+        val ipoFuture = issue("Active", date = "25 Sep 2026")
+        val futureBadge = ipoFuture.getAllotmentBadge(20260922L, emptyMap())
+        org.junit.Assert.assertNotNull(futureBadge)
+        assertEquals("Allot 25 Sep 2026", futureBadge?.label)
+        org.junit.Assert.assertFalse(futureBadge?.isGreenCheck == true)
+        org.junit.Assert.assertFalse(ipoFuture.isAllotmentDayOrAfter(20260922L, emptyMap()))
+    }
 }

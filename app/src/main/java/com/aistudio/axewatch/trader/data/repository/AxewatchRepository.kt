@@ -212,7 +212,10 @@ class AxewatchRepository(
             }
             recordAllotSource("allot_regdir", okSources > 0, 0)
             // Never cache an outage as a 24h blind spot (mirrors backend).
-            if (dir.isNotEmpty()) regDirCache = System.currentTimeMillis() to dir
+            if (dir.isNotEmpty()) {
+                regDirCache = System.currentTimeMillis() to dir
+                _regDir.value = dir
+            }
             dir
         }
 
@@ -241,15 +244,17 @@ class AxewatchRepository(
             .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
             .build()
-        for (base in RegistrarDirectory.BIGSHARE_URLS.map { it.removeSuffix("/ipo_status.html") }) {
+        for ((idx, base) in RegistrarDirectory.BIGSHARE_URLS.map { it.removeSuffix("/ipo_status.html") }.withIndex()) {
             try {
-                kotlinx.coroutines.delay(1000)
+                if (idx > 0) kotlinx.coroutines.delay(500)
                 val req = okhttp3.Request.Builder().url("$base/ipo_status.html")
                     .header("User-Agent", RegistrarDirectory.USER_AGENT).get().build()
                 val resp = client.newCall(req).execute()
                 if (!resp.isSuccessful) continue
                 val html = resp.body?.string() ?: continue
-                out.addAll(RegistrarDirectory.parseBigshareOptions(html))
+                val parsed = RegistrarDirectory.parseBigshareOptions(html)
+                out.addAll(parsed)
+                if (parsed.size >= 5) break // Primary mirror answered successfully; no need to query subsequent mirrors
             } catch (_: Exception) {
             }
         }
@@ -339,6 +344,9 @@ class AxewatchRepository(
 
     private val _mutualFunds = MutableStateFlow<List<MutualFundScheme>>(emptyList())
     val mutualFunds: Flow<List<MutualFundScheme>> = _mutualFunds.asStateFlow()
+
+    private val _regDir = MutableStateFlow<Map<String, DirectoryEntry>>(emptyMap())
+    val regDir: Flow<Map<String, DirectoryEntry>> = _regDir.asStateFlow()
 
     private val _registrarHealth = MutableStateFlow<List<RegistrarSourceHealth>>(emptyList())
     val registrarHealth: Flow<List<RegistrarSourceHealth>> = _registrarHealth.asStateFlow()
@@ -510,13 +518,40 @@ class AxewatchRepository(
     suspend fun refreshMarket() = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
 
-        // Registrar directory refreshes concurrently with quotes: IPO
-        // enrichment below awaits it. 24h-cached, usually a no-op.
+        // Launch independent remote data fetches concurrently for speed & responsiveness
         val dirDeferred = async {
             try {
                 registrarDirectory()
             } catch (_: Exception) {
                 emptyMap()
+            }
+        }
+        val gmpDeferred = async {
+            try {
+                gmpService.fetchLiveGmpData()
+            } catch (_: Exception) {
+                Pair(emptyList<IpoIssue>(), emptyList<GmpItem>())
+            }
+        }
+        val pastDeferred = async {
+            try {
+                gmpService.fetchPastListings()
+            } catch (_: Exception) {
+                emptyList<PastIpoItem>()
+            }
+        }
+        val mfDeferred = async {
+            try {
+                mfService.fetchPopularSchemes()
+            } catch (_: Exception) {
+                emptyList<MutualFundScheme>()
+            }
+        }
+        val fiiDiiDeferred = async {
+            try {
+                refreshFiiDii()
+            } catch (_: Exception) {
+                emptyList<FiiDiiFlow>()
             }
         }
 
@@ -607,9 +642,9 @@ class AxewatchRepository(
             SectorHeatmapItem("NIFTY FMCG", (fmcgStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 0.0).let { (it * 100).roundToInt() / 100.0 }, fmcgStocks.maxByOrNull { it.percentChange }?.symbol ?: "—")
         )
 
-        // 3. Fetch real IPOs & Live GMP from Investorgain / IPOWatch
+        // 3. Await real IPOs & Live GMP
         try {
-            val (liveIpos, liveGmps) = gmpService.fetchLiveGmpData()
+            val (liveIpos, liveGmps) = gmpDeferred.await()
             if (liveIpos.isNotEmpty()) {
                 // Directory-backed registrar + declared allotment dates.
                 _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
@@ -617,35 +652,31 @@ class AxewatchRepository(
             if (liveGmps.isNotEmpty()) {
                 _gmpItems.value = liveGmps
             }
-        } catch (e: Exception) {
-            // keep existing fallback
+        } catch (_: Exception) {
         }
 
-        // 4. Fetch past IPO listings
+        // 4. Await past IPO listings
         try {
-            val pastListings = gmpService.fetchPastListings()
+            val pastListings = pastDeferred.await()
             if (pastListings.isNotEmpty()) {
                 _pastIpos.value = pastListings
             }
-        } catch (e: Exception) {
-            // keep existing fallback
+        } catch (_: Exception) {
         }
 
-        // 5. Fetch live Mutual Fund NAVs from mfapi.in
+        // 5. Await live Mutual Fund NAVs
         try {
-            val liveMfs = mfService.fetchPopularSchemes()
+            val liveMfs = mfDeferred.await()
             if (liveMfs.isNotEmpty()) {
                 _mutualFunds.value = liveMfs
             }
-        } catch (e: Exception) {
-            // keep existing fallback
+        } catch (_: Exception) {
         }
 
-        // 5b. Fetch live FII/DII flows (empty on failure — never placeholders).
+        // 5b. Await live FII/DII flows
         try {
-            refreshFiiDii()
-        } catch (e: Exception) {
-            // keep existing fallback
+            fiiDiiDeferred.await()
+        } catch (_: Exception) {
         }
 
         // 6. Source health from measured outcomes (plus live Yahoo/GMP state).
@@ -1006,9 +1037,8 @@ class AxewatchRepository(
         val pans = panVaultDao.getAllPans().first()
         val results = mutableListOf<AllotmentRecordEntity>()
         for ((index, pan) in pans.withIndex()) {
-            // Paced: registrars throttle bursts, and a bulk check must not
-            // look like an attack. First PAN goes immediately.
-            if (index > 0) delay(1500)
+            // Paced: 400ms is safe for registrars and gives responsive bulk checking. First PAN goes immediately.
+            if (index > 0) delay(400)
             val record = checkIpoAllotment(pan.panNumber, ipoSymbol, pan.holderName)
             results.add(record)
         }

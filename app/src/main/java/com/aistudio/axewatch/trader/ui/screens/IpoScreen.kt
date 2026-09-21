@@ -55,6 +55,11 @@ import com.aistudio.axewatch.trader.data.model.findMatchingRegistrarLink
 import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
 import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
 import com.aistudio.axewatch.trader.data.model.parseLooseDate
+import com.aistudio.axewatch.trader.data.model.getAllotmentBadge
+import com.aistudio.axewatch.trader.data.model.isAllotmentDayOrAfter
+import com.aistudio.axewatch.trader.data.model.isAllotmentOut
+import com.aistudio.axewatch.trader.data.model.todayLooseDateKey
+import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
 import com.aistudio.axewatch.trader.ui.dialogs.IpoCalculatorDialog
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
@@ -79,6 +84,7 @@ fun IpoScreen(
     records: List<AllotmentRecordEntity> = emptyList(),
     healthList: List<RegistrarSourceHealth> = emptyList(),
     registrarLinks: List<RegistrarLink> = emptyList(),
+    regDir: Map<String, DirectoryEntry> = emptyMap(),
     checkBusy: Boolean = false,
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit = { _, _, _ -> },
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
@@ -97,6 +103,11 @@ fun IpoScreen(
     var ipoSubTab by remember { mutableIntStateOf(0) } // 0: Issues, 1: Live GMP, 2: Past Listings
     var searchQuery by remember { mutableStateOf("") }
     var calculatorIpo by remember { mutableStateOf<IpoIssue?>(null) }
+
+    val todayKey = remember { todayLooseDateKey() }
+    val allotmentActiveCount = remember(ipos, regDir, todayKey) {
+        ipos.count { it.isAllotmentOut(todayKey, regDir) || it.isAllotmentDayOrAfter(todayKey, regDir) }
+    }
 
     // Descending order from latest to oldest
     val filteredIpos = remember(ipos, searchQuery) {
@@ -249,10 +260,63 @@ fun IpoScreen(
                 when (ipoSubTab) {
                     0 -> {
                         // Active & Forthcoming Issues (Descending Order)
+                        if (allotmentActiveCount > 0) {
+                            item {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(AxeEmeraldGreen.copy(alpha = 0.12f))
+                                        .border(1.dp, AxeEmeraldGreen.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                                        .clickable { mainSection = 1 }
+                                        .padding(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.weight(1f, fill = false),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(
+                                                text = "\u2713",
+                                                color = AxeEmeraldGreen,
+                                                fontSize = 14.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Column {
+                                                Text(
+                                                    text = "Results Out & Allotment Today ($allotmentActiveCount)",
+                                                    color = AxeEmeraldGreen,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Text(
+                                                    text = "IPOs scheduled for allotment today or published by registrars",
+                                                    color = AxeTextSecondary,
+                                                    fontSize = 10.sp
+                                                )
+                                            }
+                                        }
+                                        Text(
+                                            text = "Check Now \u2192",
+                                            color = AxePrimaryCyan,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
                         items(filteredIpos, key = { it.symbol }) { ipo ->
                             IpoIssueCard(
                                 ipo = ipo,
                                 registrarLinks = registrarLinks,
+                                regDir = regDir,
                                 onCalculateGain = { calculatorIpo = ipo },
                                 onCheckAllotment = {
                                     selectedIpoForCheck = ipo.symbol
@@ -358,6 +422,7 @@ fun IpoScreen(
                 records = records,
                 healthList = healthList,
                 registrarLinks = registrarLinks,
+                regDir = regDir,
                 checkBusy = checkBusy,
                 onCheckAllotment = onCheckAllotment,
                 onCheckBulkAllotment = onCheckBulkAllotment,
@@ -377,12 +442,15 @@ fun IpoScreen(
 private fun IpoIssueCard(
     ipo: IpoIssue,
     registrarLinks: List<RegistrarLink> = emptyList(),
+    regDir: Map<String, DirectoryEntry> = emptyMap(),
     onCalculateGain: () -> Unit = {},
     onCheckAllotment: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isSme = ipo.category == "SME"
     val isPreBidding = ipo.isBiddingNotStarted()
+    val todayKey = remember { todayLooseDateKey() }
+    val allotBadge = remember(ipo, todayKey, regDir) { ipo.getAllotmentBadge(todayKey, regDir) }
     val statusColor = when {
         isPreBidding -> AxePrimaryCyan
         ipo.status == "Active" -> AxeEmeraldGreen
@@ -400,7 +468,7 @@ private fun IpoIssueCard(
             .padding(14.dp)
     ) {
         Column {
-            // Header Row: Title, SME badge, Status
+            // Header Row: Title, SME badge, Allotment Badge, Status
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -432,18 +500,42 @@ private fun IpoIssueCard(
                     }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(statusColor.copy(alpha = 0.15f))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text(
-                        text = displayStatus,
-                        color = statusColor,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (allotBadge != null) {
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (allotBadge.isGreenCheck) AxeGreenSubtle else AxePrimaryCyan.copy(alpha = 0.15f))
+                                .border(
+                                    1.dp,
+                                    if (allotBadge.isGreenCheck) AxeEmeraldGreen.copy(alpha = 0.5f) else AxePrimaryCyan.copy(alpha = 0.3f),
+                                    RoundedCornerShape(6.dp)
+                                )
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = allotBadge.label,
+                                color = if (allotBadge.isGreenCheck) AxeEmeraldGreen else AxePrimaryCyan,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(statusColor.copy(alpha = 0.15f))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = displayStatus,
+                            color = statusColor,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
 
@@ -691,7 +783,7 @@ private fun IpoIssueCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = "Check Allotment",
+                            text = if (allotBadge?.isGreenCheck == true) "Check Allotment \u2713" else "Check Allotment",
                             color = AxeEmeraldGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold

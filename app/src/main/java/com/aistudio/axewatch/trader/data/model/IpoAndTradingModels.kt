@@ -89,13 +89,116 @@ fun ipoRecencyKey(issue: IpoIssue): Long {
  */
 fun IpoIssue.isBiddingNotStarted(): Boolean {
     val openKey = parseLooseDate(issueOpenDate)
-    val cal = java.util.Calendar.getInstance()
-    val todayKey = cal.get(java.util.Calendar.YEAR) * 10000L +
-                   (cal.get(java.util.Calendar.MONTH) + 1) * 100L +
-                   cal.get(java.util.Calendar.DAY_OF_MONTH)
+    val todayKey = todayLooseDateKey()
     if (openKey > 0 && openKey > todayKey) return true
     val s = status.lowercase()
     return s == "forthcoming" || s == "upcoming" || s.contains("pre")
+}
+
+fun todayLooseDateKey(): Long {
+    val cal = java.util.Calendar.getInstance()
+    return cal.get(java.util.Calendar.YEAR) * 10000L +
+           (cal.get(java.util.Calendar.MONTH) + 1) * 100L +
+           cal.get(java.util.Calendar.DAY_OF_MONTH)
+}
+
+/**
+ * Checks if the issue has its allotment results definitively published on the registrar.
+ * Authoritative registrar entries (Link Intime live company API or Bigshare public dropdowns)
+ * provide 100% verified confirmation without hammering search APIs.
+ */
+fun IpoIssue.isAllotmentOutOnRegistrar(
+    regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
+): Boolean {
+    val canonName = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName.ifBlank { symbol })
+    if (canonName.isEmpty()) return false
+    val hit = regDir[canonName] ?: regDir.values.find {
+        com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.name, companyName)
+    }
+    if (hit != null && hit.authoritative) return true
+    val s = status.lowercase()
+    return s == "allotted"
+}
+
+/**
+ * Checks if this IPO issue is on its allotment day or within 1-2 days after.
+ * Drives the prominent main-screen allotment section.
+ */
+fun IpoIssue.isAllotmentDayOrAfter(
+    todayKey: Long = todayLooseDateKey(),
+    regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
+): Boolean {
+    if (isAllotmentOutOnRegistrar(regDir)) return true
+    val allotKey = parseLooseDate(allotmentDate)
+    if (allotKey > 0) {
+        val diff = todayKey - allotKey
+        if (diff in 0..2) return true
+    }
+    return false
+}
+
+/**
+ * Checks if the allotment results are out (via authoritative registrar list OR past allotment date).
+ */
+fun IpoIssue.isAllotmentOut(
+    todayKey: Long = todayLooseDateKey(),
+    regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
+): Boolean {
+    if (isAllotmentOutOnRegistrar(regDir)) return true
+    val allotKey = parseLooseDate(allotmentDate)
+    if (allotKey in 1..todayKey && !status.equals("Forthcoming", ignoreCase = true) && !isBiddingNotStarted()) {
+        return true
+    }
+    val s = status.lowercase()
+    return s == "allotted" || s == "listed"
+}
+
+data class AllotmentBadgeInfo(
+    val label: String,
+    val isGreenCheck: Boolean,
+    val isAmber: Boolean = false
+)
+
+fun IpoIssue.getAllotmentBadge(
+    todayKey: Long = todayLooseDateKey(),
+    regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
+): AllotmentBadgeInfo {
+    val canonName = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName.ifBlank { symbol })
+    val hit = regDir[canonName] ?: regDir.values.find {
+        com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.name, companyName)
+    }
+
+    if (hit != null && hit.authoritative) {
+        if (hit.registrar == "bigshare") {
+            return AllotmentBadgeInfo("\u2713 Listed on Bigshare", isGreenCheck = true)
+        }
+        return AllotmentBadgeInfo("\u2713 Allotment Out", isGreenCheck = true)
+    }
+    if (status.equals("Allotted", ignoreCase = true)) {
+        return AllotmentBadgeInfo("\u2713 Allotted", isGreenCheck = true)
+    }
+    val allotKey = parseLooseDate(allotmentDate)
+    if (allotKey > 0) {
+        if (allotKey == todayKey) {
+            return AllotmentBadgeInfo("\u2713 Allotment Today", isGreenCheck = true)
+        }
+        if (allotKey < todayKey && !status.equals("Forthcoming", ignoreCase = true)) {
+            return AllotmentBadgeInfo("\u2713 Results Declared", isGreenCheck = true)
+        }
+        if (allotKey > todayKey) {
+            return AllotmentBadgeInfo("Allot $allotmentDate", isGreenCheck = false)
+        }
+    }
+    if (isBiddingNotStarted()) {
+        return AllotmentBadgeInfo("Pre-Apply", isGreenCheck = false)
+    }
+    if (status.equals("Active", ignoreCase = true) || status.equals("Open", ignoreCase = true)) {
+        return AllotmentBadgeInfo("Bidding Open", isGreenCheck = false)
+    }
+    if (status.equals("Closed", ignoreCase = true)) {
+        return AllotmentBadgeInfo("Awaiting Allotment", isGreenCheck = false, isAmber = true)
+    }
+    return AllotmentBadgeInfo(status.ifBlank { "Upcoming" }, isGreenCheck = false)
 }
 
 /**

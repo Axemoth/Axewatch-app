@@ -76,6 +76,11 @@ import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
 import com.aistudio.axewatch.trader.data.model.findMatchingRegistrarLink
+import com.aistudio.axewatch.trader.data.model.getAllotmentBadge
+import com.aistudio.axewatch.trader.data.model.isAllotmentDayOrAfter
+import com.aistudio.axewatch.trader.data.model.isAllotmentOut
+import com.aistudio.axewatch.trader.data.model.todayLooseDateKey
+import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 import com.aistudio.axewatch.trader.ui.theme.OnPrimaryDark
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
@@ -102,6 +107,7 @@ fun AllotmentScreen(
     records: List<AllotmentRecordEntity>,
     healthList: List<RegistrarSourceHealth> = emptyList(),
     registrarLinks: List<RegistrarLink> = emptyList(),
+    regDir: Map<String, DirectoryEntry> = emptyMap(),
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit,
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
     onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
@@ -156,6 +162,13 @@ fun AllotmentScreen(
         }
     }
 
+    val todayKey = remember { todayLooseDateKey() }
+    val featuredAllotmentIpos = remember(ipos, regDir) {
+        ipos.filter { issue ->
+            issue.isAllotmentOut(todayKey, regDir) || issue.isAllotmentDayOrAfter(todayKey, regDir)
+        }.sortedWith(compareByDescending { ipoRecencyKey(it) })
+    }
+
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
@@ -167,6 +180,272 @@ fun AllotmentScreen(
         if (healthList.isNotEmpty()) {
             item {
                 RegistrarHealthStrip(healthList = healthList)
+            }
+        }
+
+        // -------------------------------------------------------------
+        // FEATURED MAIN-SCREEN SECTION: ALLOTMENT RESULTS OUT / TODAY
+        // Surfaced directly on screen (no dropdown menu burying!)
+        // -------------------------------------------------------------
+        if (featuredAllotmentIpos.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "RESULTS OUT & ALLOTMENT TODAY (${featuredAllotmentIpos.size})",
+                            color = AxeEmeraldGreen,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Auto-detected · Verified",
+                            color = AxeTextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(featuredAllotmentIpos, key = { "feat_${it.symbol}" }) { ipo ->
+                            val badge = ipo.getAllotmentBadge(todayKey, regDir)
+                            val isSelected = ipo.symbol == selectedIpoSymbol
+                            val isBigshare = ipo.registrar.contains("bigshare", ignoreCase = true)
+
+                            Box(
+                                modifier = Modifier
+                                    .width(280.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(AxeDarkSurface)
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) AxePrimaryCyan else if (badge.isGreenCheck) AxeEmeraldGreen.copy(alpha = 0.5f) else AxeBorder,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable {
+                                        selectedIpoSymbol = ipo.symbol
+                                    }
+                                    .padding(12.dp)
+                            ) {
+                                Column {
+                                    // Top row: Title + Verified Badge
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = ipo.companyName,
+                                            color = AxeTextPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(
+                                                    if (badge.isGreenCheck) AxeGreenSubtle
+                                                    else if (badge.isAmber) AxeAmber.copy(alpha = 0.18f)
+                                                    else AxeDarkSurfaceElevated
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = badge.label,
+                                                color = if (badge.isGreenCheck) AxeEmeraldGreen else if (badge.isAmber) AxeAmber else AxePrimaryCyan,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    // Chips row: Category & Registrar
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(AxeDarkSurfaceElevated)
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(ipo.category, color = AxeTextSecondary, fontSize = 9.sp)
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(if (isBigshare) AxeAmber.copy(alpha = 0.15f) else AxeDarkSurfaceElevated)
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isBigshare) "Bigshare" else ipo.registrar,
+                                                color = if (isBigshare) AxeAmber else AxePrimaryCyan,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                        if (ipo.allotmentDate.isNotBlank()) {
+                                            Text(
+                                                text = "BoA: ${ipo.allotmentDate}",
+                                                color = AxeTextMuted,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    // Metrics row: Price, Lot, GMP
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("PRICE", color = AxeTextMuted, fontSize = 9.sp)
+                                            Text(
+                                                text = if (ipo.issuePrice > 0) "₹${ipo.issuePrice.toInt()}" else "—",
+                                                color = AxeTextPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        if (ipo.lotSize > 0) {
+                                            Column {
+                                                Text("LOT SIZE", color = AxeTextMuted, fontSize = 9.sp)
+                                                Text(
+                                                    text = "${ipo.lotSize} sh",
+                                                    color = AxeTextPrimary,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text("LIVE GMP", color = AxeTextMuted, fontSize = 9.sp)
+                                            Text(
+                                                text = if (ipo.gmpAmount > 0) "+₹${ipo.gmpAmount.toInt()} (${ipo.gmpPercent}%)" else "—",
+                                                color = if (ipo.gmpAmount > 0) AxeEmeraldGreen else AxeTextSecondary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    // 1-Tap Action Buttons
+                                    if (isBigshare) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    selectedIpoSymbol = ipo.symbol
+                                                    val copyPan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
+                                                    if (copyPan.isNotBlank()) {
+                                                        clipboardManager.setText(AnnotatedString(copyPan))
+                                                    }
+                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ipo.bigshareonline.com/ipo_status.html"))
+                                                    context.startActivity(intent)
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                                    contentDescription = null,
+                                                    tint = AxeAmber,
+                                                    modifier = Modifier.size(11.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text("Open Bigshare", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+
+                                            Button(
+                                                onClick = {
+                                                    selectedIpoSymbol = ipo.symbol
+                                                    manualRecordIpoSymbol = ipo.symbol
+                                                    manualRecordPan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
+                                                    showManualRecordDialog = true
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(11.dp))
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text("Record", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    } else {
+                                        // Automated check (Link Intime or KFintech)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            if (savedPans.size > 1) {
+                                                Button(
+                                                    onClick = {
+                                                        selectedIpoSymbol = ipo.symbol
+                                                        onCheckBulkAllotment(ipo.symbol)
+                                                    },
+                                                    enabled = !checkBusy,
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = AxeEmeraldGreen),
+                                                    modifier = Modifier.weight(1f).height(34.dp),
+                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Refresh, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Check All PANs", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = {
+                                                        selectedIpoSymbol = ipo.symbol
+                                                        val pan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
+                                                        if (pan.isNotBlank()) {
+                                                            onCheckAllotment(pan, ipo.symbol, holderInput.ifBlank { "Applicant" })
+                                                        }
+                                                    },
+                                                    enabled = !checkBusy,
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
+                                                    modifier = Modifier.weight(1f).height(34.dp),
+                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Search, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Check Status", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
