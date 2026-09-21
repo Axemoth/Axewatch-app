@@ -163,7 +163,7 @@ fun AllotmentScreen(
     }
 
     val todayKey = remember { todayLooseDateKey() }
-    val featuredAllotmentIpos = remember(ipos, regDir) {
+    val featuredAllotmentIpos = remember(ipos, regDir, todayKey) {
         ipos.filter { issue ->
             issue.isAllotmentOut(todayKey, regDir) || issue.isAllotmentDayOrAfter(todayKey, regDir)
         }.sortedWith(compareByDescending { ipoRecencyKey(it) })
