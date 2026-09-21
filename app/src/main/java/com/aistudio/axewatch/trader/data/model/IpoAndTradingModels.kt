@@ -83,6 +83,43 @@ fun ipoRecencyKey(issue: IpoIssue): Long {
         ?: parseLooseDate(issue.issueOpenDate)
 }
 
+/**
+ * Returns true if the IPO issue is in pre-apply stage and bidding has not opened yet.
+ * IPOs in this stage will naturally have no subscription figures on stock exchanges.
+ */
+fun IpoIssue.isBiddingNotStarted(): Boolean {
+    val openKey = parseLooseDate(issueOpenDate)
+    val cal = java.util.Calendar.getInstance()
+    val todayKey = cal.get(java.util.Calendar.YEAR) * 10000L +
+                   (cal.get(java.util.Calendar.MONTH) + 1) * 100L +
+                   cal.get(java.util.Calendar.DAY_OF_MONTH)
+    if (openKey > 0 && openKey > todayKey) return true
+    val s = status.lowercase()
+    return s == "forthcoming" || s == "upcoming" || s.contains("pre")
+}
+
+/**
+ * Finds the matching registrar direct portal link for an IPO issue.
+ */
+fun findMatchingRegistrarLink(registrarName: String, links: List<RegistrarLink>): RegistrarLink? {
+    if (registrarName.isBlank() || registrarName.equals("Unknown", ignoreCase = true)) return null
+    val regLower = registrarName.lowercase()
+    return links.find { link ->
+        val titleLower = link.title.lowercase()
+        val badgeLower = link.badge.lowercase()
+        titleLower.contains(regLower) ||
+        regLower.contains(badgeLower) ||
+        ((regLower.contains("mufg") || regLower.contains("intime")) && (titleLower.contains("mufg") || titleLower.contains("intime"))) ||
+        (regLower.contains("kfin") && titleLower.contains("kfin")) ||
+        (regLower.contains("bigshare") && titleLower.contains("bigshare")) ||
+        (regLower.contains("skyline") && titleLower.contains("skyline")) ||
+        (regLower.contains("cameo") && titleLower.contains("cameo")) ||
+        (regLower.contains("maashitla") && titleLower.contains("maashitla")) ||
+        (regLower.contains("purva") && titleLower.contains("purva")) ||
+        (regLower.contains("beetal") && titleLower.contains("beetal"))
+    }
+}
+
 data class GmpItem(
     val companyName: String,
     val symbol: String,

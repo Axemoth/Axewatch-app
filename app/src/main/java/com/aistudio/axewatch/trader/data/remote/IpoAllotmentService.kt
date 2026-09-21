@@ -204,8 +204,11 @@ class IpoAllotmentService {
     ): AllotmentQueryResult = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
 
-        // 1. If IPO status is Forthcoming or Active, allotment CANNOT be out yet
-        if (ipoStatus.equals("Forthcoming", ignoreCase = true) && !allotmentDeclared) {
+        // 1. If IPO status is Forthcoming, Upcoming, or Active, allotment CANNOT be out yet
+        val isForthcoming = ipoStatus.equals("Forthcoming", ignoreCase = true) ||
+            ipoStatus.equals("Upcoming", ignoreCase = true) ||
+            ipoStatus.contains("pre", ignoreCase = true)
+        if (isForthcoming && !allotmentDeclared) {
             return@withContext AllotmentQueryResult(
                 found = false,
                 source = "Registrar Schedule",
@@ -215,7 +218,7 @@ class IpoAllotmentService {
                 status = "RESULTS_NOT_OUT",
                 applicationNo = "N/A",
                 applicantName = "",
-                note = "Results are not out yet. This IPO issue is forthcoming and bidding has not opened."
+                note = "Results are not out yet. This IPO issue is in pre-apply stage and bidding has not opened yet."
             )
         }
 

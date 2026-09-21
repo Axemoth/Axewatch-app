@@ -36,7 +36,9 @@ class IpoGmpService {
 
         private val SUB_COLUMN_ALIASES = listOf(
             "qib" to listOf("qib (x)", "qib"),
-            "nii" to listOf("nii (x)", "nii", "hni"),
+            "nii" to listOf("nii (x)", "nii", "hni (x)", "hni"),
+            "shni" to listOf("shni (x)", "shni", "snii (x)", "snii", "s-hni", "s-nii", "small hni", "bids 2l-10l"),
+            "bhni" to listOf("bhni (x)", "bhni", "bnii (x)", "bnii", "b-hni", "b-nii", "big hni", "bids >10l"),
             "retail" to listOf("retail (x)", "retail", "rii (x)", "rii"),
             "total" to listOf("total (x)", "total", "overall"),
             "close_date" to listOf("closing date", "close date", "close"),
@@ -59,6 +61,8 @@ class IpoGmpService {
     private data class LiveSubInfo(
         val qib: Double,
         val nii: Double,
+        val shni: Double = 0.0,
+        val bhni: Double = 0.0,
         val retail: Double,
         val total: Double,
         val closeDate: String
@@ -173,6 +177,8 @@ class IpoGmpService {
         val matchedSub = findSubscription(cleanName, subMap)
         val qib = matchedSub?.qib ?: 0.0
         val nii = matchedSub?.nii ?: 0.0
+        val shni = matchedSub?.shni ?: 0.0
+        val bhni = matchedSub?.bhni ?: 0.0
         val rii = matchedSub?.retail ?: 0.0
         val total = matchedSub?.total ?: 0.0
         val finalCloseDate = if (matchedSub?.closeDate?.isNotBlank() == true) matchedSub.closeDate else closeDate
@@ -208,8 +214,8 @@ class IpoGmpService {
                     registrar = registrar,
                     qibSub = qib,
                     niiSub = nii,
-                    shniSub = 0.0,
-                    bhniSub = 0.0,
+                    shniSub = shni,
+                    bhniSub = bhni,
                     riiSub = rii,
                     totalSub = total,
                     gmpAmount = gmpAmount,
@@ -267,11 +273,13 @@ class IpoGmpService {
 
                 val qib = parseNumber(row["qib"] ?: "0")
                 val nii = parseNumber(row["nii"] ?: "0")
+                val shni = parseNumber(row["shni"] ?: "0")
+                val bhni = parseNumber(row["bhni"] ?: "0")
                 val retail = parseNumber(row["retail"] ?: "0")
                 val total = parseNumber(row["total"] ?: "0")
                 val closeDate = row["close_date"] ?: ""
 
-                subMap[clean] = LiveSubInfo(qib, nii, retail, total, closeDate)
+                subMap[clean] = LiveSubInfo(qib, nii, shni, bhni, retail, total, closeDate)
             }
         }
         return subMap
@@ -393,14 +401,16 @@ class IpoGmpService {
 
     private fun matchColumnAlias(header: String, aliases: List<Pair<String, List<String>>>): String? {
         val hClean = header.lowercase()
-            .replace("*", "")
-            .replace(".", "")
             .replace(Regex("[^a-z0-9% ]"), " ")
+            .replace(Regex("\\s+"), " ")
             .trim()
 
         for ((canon, aliasList) in aliases) {
             for (a in aliasList) {
-                val aClean = a.replace("*", "").replace(".", "").trim()
+                val aClean = a.lowercase()
+                    .replace(Regex("[^a-z0-9% ]"), " ")
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
                 if (hClean == aClean || hClean.startsWith("$aClean ") || hClean.endsWith(" $aClean") || hClean.contains(" $aClean ")) {
                     return canon
                 }
@@ -443,7 +453,13 @@ class IpoGmpService {
         }
         val parts = clean.split("-")
         return if (parts.size >= 2) {
-            Pair(parts[0].trim(), parts[1].trim())
+            var start = parts[0].trim()
+            val end = parts[1].trim()
+            val monthMatch = Regex("[a-zA-Z]+(?:\\s+\\d{4})?").find(end)
+            if (Regex("^\\d{1,2}$").matches(start) && monthMatch != null) {
+                start = "$start ${monthMatch.value}"
+            }
+            Pair(start, end)
         } else {
             Pair(clean, clean)
         }
@@ -453,7 +469,7 @@ class IpoGmpService {
         val l = rawStatus.lowercase()
         return when {
             l.contains("open") -> "Active"
-            l.contains("upcoming") -> "Forthcoming"
+            l.contains("upcoming") || l.contains("forthcom") || l.contains("pre") -> "Forthcoming"
             l.contains("close") -> "Closed"
             l.contains("allot") -> "Allotted"
             l.contains("list") -> "Listed"

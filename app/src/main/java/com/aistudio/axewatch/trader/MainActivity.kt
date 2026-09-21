@@ -52,6 +52,7 @@ import com.aistudio.axewatch.trader.ui.screens.IpoScreen
 import com.aistudio.axewatch.trader.ui.screens.MarketScreen
 import com.aistudio.axewatch.trader.ui.screens.PaperTradingScreen
 import com.aistudio.axewatch.trader.ui.screens.PortfolioScreen
+import com.aistudio.axewatch.trader.ui.screens.StocksScreen
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurface
@@ -144,11 +145,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     }
 
     val navTabs = listOf(
-        NavTabItem("Market", Icons.Default.ShowChart, "bottom_nav_market"),
-        NavTabItem("IPO & GMP", Icons.Default.TrendingUp, "bottom_nav_ipo"),
-        NavTabItem("Paper Trade", Icons.Default.AccountBalanceWallet, "bottom_nav_paper"),
-        NavTabItem("Portfolio", Icons.Default.PieChart, "bottom_nav_portfolio"),
-        NavTabItem("Allotment", Icons.Default.VerifiedUser, "bottom_nav_allotment")
+        NavTabItem("IPO", Icons.Default.TrendingUp, "bottom_nav_ipo"),
+        NavTabItem("Stocks", Icons.Default.ShowChart, "bottom_nav_stocks"),
+        NavTabItem("Portfolio", Icons.Default.PieChart, "bottom_nav_portfolio")
     )
 
     Scaffold(
@@ -207,7 +206,41 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                 .padding(innerPadding)
         ) {
             when (selectedTab) {
-                0 -> MarketScreen(
+                0 -> IpoScreen(
+                    ipos = ipos,
+                    gmps = gmps,
+                    pastIpos = pastIpos,
+                    savedPans = savedPans,
+                    records = allotmentRecords,
+                    healthList = registrarHealth,
+                    registrarLinks = registrarLinks,
+                    checkBusy = allotBusy,
+                    onCheckAllotment = { pan, sym, holder ->
+                        viewModel.checkAllotment(pan, sym, holder)
+                    },
+                    onCheckBulkAllotment = { ipoSymbol ->
+                        viewModel.checkBulkAllotment(ipoSymbol)
+                    },
+                    onRetryRecord = { rec ->
+                        viewModel.retryAllotment(rec)
+                    },
+                    onRecordManualAllotment = { pan, sym, st, sh, app ->
+                        viewModel.recordManualAllotment(pan, sym, st, sh, app)
+                    },
+                    onSavePan = { pan, name, rel ->
+                        viewModel.savePan(pan, name, rel)
+                    },
+                    onDeletePan = { pan ->
+                        viewModel.deletePan(pan)
+                    },
+                    onDeleteRecord = { rec ->
+                        viewModel.deleteRecord(rec)
+                    },
+                    onClearHistory = {
+                        viewModel.clearAllotmentHistory()
+                    }
+                )
+                1 -> StocksScreen(
                     indices = indices,
                     stocks = stocks,
                     sectors = sectors,
@@ -221,14 +254,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                             isCurrentlyWatchlisted = watchlistedSymbols.contains(stock.symbol)
                         )
                     },
-                    onStockClick = { stock -> viewModel.selectStock(stock) }
-                )
-                1 -> IpoScreen(
-                    ipos = ipos,
-                    gmps = gmps,
-                    pastIpos = pastIpos
-                )
-                2 -> PaperTradingScreen(
+                    onStockClick = { stock -> viewModel.selectStock(stock) },
                     account = account,
                     positions = positions,
                     orders = orders,
@@ -277,7 +303,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     scanRunning = tradeScanRunning,
                     scanProgress = tradeScanProgress
                 )
-                3 -> PortfolioScreen(
+                2 -> PortfolioScreen(
                     summary = summary,
                     holdings = holdings,
                     stocks = stocks,
@@ -299,38 +325,6 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                         viewModel.toggleWatchlist(sym, sym, 0.0, true)
                     },
                     onSeedSampleHoldings = { viewModel.seedSampleHoldings() }
-                )
-                4 -> AllotmentScreen(
-                    ipos = ipos,
-                    savedPans = savedPans,
-                    records = allotmentRecords,
-                    healthList = registrarHealth,
-                    registrarLinks = registrarLinks,
-                    checkBusy = allotBusy,
-                    onCheckAllotment = { pan, sym, holder ->
-                        viewModel.checkAllotment(pan, sym, holder)
-                    },
-                    onCheckBulkAllotment = { ipoSymbol ->
-                        viewModel.checkBulkAllotment(ipoSymbol)
-                    },
-                    onRetryRecord = { rec ->
-                        viewModel.retryAllotment(rec)
-                    },
-                    onRecordManualAllotment = { pan, sym, st, sh, app ->
-                        viewModel.recordManualAllotment(pan, sym, st, sh, app)
-                    },
-                    onSavePan = { pan, name, rel ->
-                        viewModel.savePan(pan, name, rel)
-                    },
-                    onDeletePan = { pan ->
-                        viewModel.deletePan(pan)
-                    },
-                    onDeleteRecord = { rec ->
-                        viewModel.deleteRecord(rec)
-                    },
-                    onClearHistory = {
-                        viewModel.clearAllotmentHistory()
-                    }
                 )
             }
         }

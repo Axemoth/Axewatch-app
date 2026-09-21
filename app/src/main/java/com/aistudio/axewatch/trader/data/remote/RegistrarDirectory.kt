@@ -165,9 +165,10 @@ object RegistrarDirectory {
 
     /** Bigshare public company dropdown (captcha guards search, not this). */
     fun parseBigshareOptions(html: String): List<Pair<String, String>> {
-        val sel = Regex("<select[^>]*id=\"ddlCompany\"[^>]*>(.*?)</select>",
+        val rawSel = Regex("<select[^>]*id=\"ddlCompany\"[^>]*>(.*?)</select>",
             setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-            .find(html)?.groupValues?.get(1) ?: html
+            .find(html)?.groupValues?.get(1) ?: return emptyList()
+        val sel = Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL).replace(rawSel, "")
         val optRe = Regex("<option[^>]*value=\"([^\"]*)\"[^>]*>([^<]{2,100})</option>")
         return optRe.findAll(sel).mapNotNull { m ->
             val v = m.groupValues[1].trim()
@@ -207,7 +208,12 @@ object RegistrarDirectory {
 
     suspend fun fetchText(url: String, client: OkHttpClient = sharedClient()): String =
         withContext(Dispatchers.IO) {
-            val req = Request.Builder().url(url).header("User-Agent", USER_AGENT).get().build()
+            val req = Request.Builder()
+                .url(url)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+                .get()
+                .build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) throw IllegalStateException("HTTP ${resp.code}")
                 resp.body?.string() ?: throw IllegalStateException("empty body")

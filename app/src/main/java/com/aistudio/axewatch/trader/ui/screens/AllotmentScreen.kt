@@ -68,6 +68,7 @@ import com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity
 import com.aistudio.axewatch.trader.data.model.IpoIssue
 import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
 import com.aistudio.axewatch.trader.data.model.ipoSection
+import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
@@ -105,16 +106,19 @@ fun AllotmentScreen(
     onDeletePan: (PanVaultEntity) -> Unit,
     onDeleteRecord: (AllotmentRecordEntity) -> Unit = {},
     onClearHistory: () -> Unit = {},
+    initialSelectedSymbol: String = "",
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var selectedIpoSymbol by remember { mutableStateOf("") }
+    var selectedIpoSymbol by remember(initialSelectedSymbol) { mutableStateOf(initialSelectedSymbol) }
     // Smart default: most recent results-declared issue first, then most
     // recent closed, then whatever leads the feed. Re-evaluates as the
     // issue list loads — the old firstOrNull() froze on the first frame
     // (usually empty) and never recovered.
-    LaunchedEffect(ipos) {
-        if (ipos.none { it.symbol == selectedIpoSymbol }) {
+    LaunchedEffect(ipos, initialSelectedSymbol) {
+        if (initialSelectedSymbol.isNotBlank() && ipos.any { it.symbol == initialSelectedSymbol }) {
+            selectedIpoSymbol = initialSelectedSymbol
+        } else if (selectedIpoSymbol.isBlank() || ipos.none { it.symbol == selectedIpoSymbol }) {
             selectedIpoSymbol = ipos
                 .sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
                 .firstOrNull()?.symbol ?: ""
@@ -748,7 +752,7 @@ fun AllotmentScreen(
                     when (section) {
                         0 -> "RESULTS DECLARED"
                         1 -> "OPEN NOW"
-                        2 -> "UPCOMING"
+                        2 -> "UPCOMING (PRE-APPLY)"
                         else -> "OTHERS"
                     }
                 }.toList()
@@ -821,13 +825,25 @@ fun AllotmentScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(ipo.companyName, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                        val isPreBidding = ipo.isBiddingNotStarted()
                                         Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(4.dp))
-                                                .background(if (ipo.status == "Active") AxeGreenSubtle else AxeDarkSurface)
+                                                .background(
+                                                    if (isPreBidding) AxePrimaryCyan.copy(alpha = 0.15f)
+                                                    else if (ipo.status == "Active") AxeGreenSubtle
+                                                    else AxeDarkSurface
+                                                )
                                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                                         ) {
-                                            Text(ipo.status, color = if (ipo.status == "Active") AxeEmeraldGreen else AxeTextMuted, fontSize = 9.sp)
+                                            Text(
+                                                text = if (isPreBidding) "Pre-Apply" else ipo.status,
+                                                color = if (isPreBidding) AxePrimaryCyan
+                                                        else if (ipo.status == "Active") AxeEmeraldGreen
+                                                        else AxeTextMuted,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))
@@ -841,8 +857,11 @@ fun AllotmentScreen(
                                         color = AxeTextSecondary,
                                         fontSize = 11.sp
                                     )
+                                    val isPreBiddingSub = ipo.isBiddingNotStarted()
                                     Text(
-                                        text = if (ipo.totalSub > 0) {
+                                        text = if (isPreBiddingSub) {
+                                            "Pre-Apply · Opens: ${ipo.issueOpenDate.ifBlank { "TBA" }}"
+                                        } else if (ipo.totalSub > 0) {
                                             "Total Sub: ${ipo.totalSub}x · Close: ${ipo.issueCloseDate}"
                                         } else {
                                             "Close: ${ipo.issueCloseDate}"
