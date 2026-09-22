@@ -88,6 +88,14 @@ History of removed fabrications (do not reintroduce):
 - `refreshMarket()` (launch + pull-to-refresh): Yahoo quotes + 7 indices,
   GMP/IPOs/past via `IpoGmpService` scrapers, MF NAVs via mfapi.in,
   FII/DII via `FiiDiiService` (NSE bot wall; empty on failure).
+- **Subscription granularity is InvestorGain-only**: its live table carries
+  explicit SHNI/BHNI columns (verified live); the IPOWatch fallback serves
+  QIB/NII/Retail/Total only, so SHNI/BHNI honestly render "—" when
+  InvestorGain is down. Exact NSE `bidDetails` splits are unavailable
+  on-device (bot wall + throttle budget) — do not fake them from NII
+  fractions. IPOWatch GMP table positions are layout, not contract:
+  `pickGmpTables`/`pickPastTable` select by column shape. ipoindex.in has
+  no server-rendered tables, so it is deliberately NOT a source.
 - Seeds are **empty/zeroed** until live data lands; offline = empty states.
 - Trade ideas: on-device rule engine (`TechnicalAnalysisEngine`) over real
   Yahoo bars. The Signals tab **auto-runs once (cached)** on entry

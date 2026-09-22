@@ -69,10 +69,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
 import com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity
+import com.aistudio.axewatch.trader.data.model.ALLOT_PICKER_TITLES
 import com.aistudio.axewatch.trader.data.model.IpoIssue
+import com.aistudio.axewatch.trader.data.model.allotPickerSection
 import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
 import com.aistudio.axewatch.trader.data.model.ipoSection
 import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
+import com.aistudio.axewatch.trader.data.model.registrarCounts
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
 import com.aistudio.axewatch.trader.data.model.findMatchingRegistrarLink
@@ -163,6 +166,16 @@ fun AllotmentScreen(
     }
 
     val todayKey = remember { todayLooseDateKey() }
+    // Issues with a decisive saved outcome (registrar answer or hand-logged
+    // result) count as results-declared in the picker, mirroring the web
+    // dashboard's decided-keys rule.
+    val decidedSymbols = remember(records) {
+        records
+            .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" }
+            .map { it.ipoSymbol }
+            .toSet()
+    }
+    val regCounts = remember(ipos) { registrarCounts(ipos) }
     val featuredAllotmentIpos = remember(ipos, regDir, todayKey) {
         ipos.filter { issue ->
             issue.isAllotmentOut(todayKey, regDir) || issue.isAllotmentDayOrAfter(todayKey, regDir)
@@ -180,6 +193,70 @@ fun AllotmentScreen(
         if (healthList.isNotEmpty()) {
             item {
                 RegistrarHealthStrip(healthList = healthList)
+            }
+        }
+
+        // Registrar directory strip: per-registrar issue counts from the live
+        // list (mirrors the web dashboard). Pure count display, no checks.
+        if (regCounts.isNotEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxeDarkSurface)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "REGISTRARS",
+                            color = AxeTextMuted,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            "${ipos.size} issues mapped",
+                            color = AxeTextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(regCounts, key = { it.first }) { (code, n) ->
+                            val isBigshare = code.equals("bigshare", ignoreCase = true)
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(AxeDarkSurfaceElevated)
+                                    .border(
+                                        1.dp,
+                                        if (isBigshare) AxeAmber.copy(alpha = 0.3f) else AxeBorder,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    code.uppercase(),
+                                    color = if (isBigshare) AxeAmber else AxePrimaryCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("$n", color = AxeTextMuted, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1233,20 +1310,21 @@ fun AllotmentScreen(
             }
         }
         // Sections, recent first: declared results on top (that's what most
-        // checks target), then open issues, then upcoming.
-        val pickerSections = remember(filteredIpos) {
+        // checks target), then open, upcoming, closed-awaiting, older.
+        // Mirrors the web dashboard's lifecycle groups (decided records and
+        // declared dates beat lagging tracker status; >30d closes go Older).
+        val pickerSections = remember(filteredIpos, decidedSymbols, todayKey, regDir) {
             filteredIpos
-                .sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
-                .groupBy { ipoSection(it) }
+                .sortedWith(
+                    compareBy(
+                        { allotPickerSection(it, it.symbol in decidedSymbols, todayKey, regDir) },
+                        { -ipoRecencyKey(it) }
+                    )
+                )
+                .groupBy { allotPickerSection(it, it.symbol in decidedSymbols, todayKey, regDir) }
                 .toSortedMap()
-                .mapKeys { (section, _) ->
-                    when (section) {
-                        0 -> "RESULTS DECLARED"
-                        1 -> "OPEN NOW"
-                        2 -> "UPCOMING (PRE-APPLY)"
-                        else -> "OTHERS"
-                    }
-                }.toList()
+                .mapKeys { (section, _) -> ALLOT_PICKER_TITLES[section] ?: "OTHERS" }
+                .toList()
         }
 
         AlertDialog(
@@ -1290,13 +1368,15 @@ fun AllotmentScreen(
                             pickerSections.forEach { (title, issues) ->
                                 item(key = "hdr_$title") {
                                     Text(
-                                        title, color = AxeTextSecondary, fontSize = 10.sp,
+                                        "$title · ${issues.size}",
+                                        color = AxeTextSecondary, fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold, letterSpacing = 1.sp,
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
                                 }
                                 items(issues, key = { "ipo_${it.symbol}" }) { ipo ->
                             val isSel = ipo.symbol == selectedIpoSymbol
+                            val rowBadge = ipo.getAllotmentBadge(todayKey, regDir)
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1317,24 +1397,42 @@ fun AllotmentScreen(
                                     ) {
                                         Text(ipo.companyName, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                         val isPreBidding = ipo.isBiddingNotStarted()
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(
-                                                    if (isPreBidding) AxePrimaryCyan.copy(alpha = 0.15f)
-                                                    else if (ipo.status == "Active") AxeGreenSubtle
-                                                    else AxeDarkSurface
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (rowBadge.isGreenCheck) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(RoundedCornerShape(4.dp))
+                                                        .background(AxeGreenSubtle)
+                                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "Results out",
+                                                        color = AxeEmeraldGreen,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                            }
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(4.dp))
+                                                    .background(
+                                                        if (isPreBidding) AxePrimaryCyan.copy(alpha = 0.15f)
+                                                        else if (ipo.status == "Active") AxeGreenSubtle
+                                                        else AxeDarkSurface
+                                                    )
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = if (isPreBidding) "Pre-Apply" else ipo.status,
+                                                    color = if (isPreBidding) AxePrimaryCyan
+                                                            else if (ipo.status == "Active") AxeEmeraldGreen
+                                                            else AxeTextMuted,
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.SemiBold
                                                 )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = if (isPreBidding) "Pre-Apply" else ipo.status,
-                                                color = if (isPreBidding) AxePrimaryCyan
-                                                        else if (ipo.status == "Active") AxeEmeraldGreen
-                                                        else AxeTextMuted,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
+                                            }
                                         }
                                     }
                                     Spacer(modifier = Modifier.height(2.dp))

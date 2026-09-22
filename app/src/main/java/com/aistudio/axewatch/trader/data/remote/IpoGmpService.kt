@@ -26,7 +26,8 @@ class IpoGmpService {
         private const val INVESTORGAIN_PERF_URL = "https://www.investorgain.com/report/ipo-gmp-performance-tracker/377/all/"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 
-        private val COLUMN_ALIASES = listOf(
+        // Internal so tests pin header aliasing against live-observed shapes.
+        internal val COLUMN_ALIASES = listOf(
             "gmp" to listOf("ipo gmp", "gmp*", "gmp (rs)", "gmp ₹", "gmp", "premium"),
             "est_listing" to listOf("est. listing", "estimated listing", "exp listing", "listing gain", "est listing"),
             "listing_price" to listOf("listing price", "listing_price", "listing on"),
@@ -44,7 +45,7 @@ class IpoGmpService {
             "name" to listOf("ipo name", "company name", "company", "ipo", "name")
         )
 
-        private val SUB_COLUMN_ALIASES = listOf(
+        internal val SUB_COLUMN_ALIASES = listOf(
             "qib" to listOf("qib (x)", "qib"),
             "nii" to listOf("nii (x)", "nii", "hni (x)", "hni"),
             "shni" to listOf("shni (x)", "shni", "snii (x)", "snii", "s-hni", "s-nii", "small hni", "bids 2l-10l"),
@@ -72,7 +73,9 @@ class IpoGmpService {
         .readTimeout(12, TimeUnit.SECONDS)
         .build()
 
-    private data class ParsedTable(
+    // Internal (not private) so unit tests can pin table selection + header
+    // aliasing against live-observed shapes without touching the network.
+    internal data class ParsedTable(
         val headers: List<String>,
         val colMap: Map<String, Int>,
         val rows: List<Map<String, String>>
@@ -400,10 +403,10 @@ class IpoGmpService {
         val allIpos = mutableListOf<IpoIssue>()
         val allGmps = mutableListOf<GmpItem>()
 
-        // Table 0 = Mainboard, Table 1 = SME
-        for ((tIdx, table) in tables.withIndex()) {
-            if (tIdx > 1) break // Table 2 is past performance
-            val category = if (tIdx == 0) "Mainboard" else "SME"
+        // Mainboard then SME, but positions are layout, not contract: only
+        // consume tables that actually carry a GMP column (promo/extra
+        // tables must never shift the segment labels or leak into the feed).
+        for ((table, category) in pickGmpTables(tables)) {
 
             for (row in table.rows) {
                 val rawName = row["name"] ?: continue
@@ -687,10 +690,9 @@ class IpoGmpService {
 
         val html = response.body?.string() ?: return emptyList()
         val tables = parseTables(html, COLUMN_ALIASES)
-        if (tables.size < 3) return emptyList()
-
-        // Table 2 is typically the Past Listings table: Name, Issue Price, GMP, Listing Price
-        val pastTable = tables[2]
+        // Past Listings table = the one carrying a Listing Price column
+        // (live GMP tables never have it), wherever it sits.
+        val pastTable = pickPastTable(tables) ?: return emptyList()
         val pastList = mutableListOf<PastIpoItem>()
 
         for (row in pastTable.rows.take(30)) {
@@ -788,7 +790,26 @@ class IpoGmpService {
         return result
     }
 
-    private fun matchColumnAlias(header: String, aliases: List<Pair<String, List<String>>>): String? {
+    /**
+     * IPOWatch GMP table selection: first table carrying a GMP column =
+     * Mainboard, second = SME. Tables without one (past performance, promo,
+     * layout) are ignored however the page order shifts. Pure, unit-tested.
+     */
+    internal fun pickGmpTables(tables: List<ParsedTable>): List<Pair<ParsedTable, String>> {
+        return tables.filter { it.colMap.containsKey("gmp") && it.rows.isNotEmpty() }
+            .take(2)
+            .mapIndexed { idx, t -> t to if (idx == 0) "Mainboard" else "SME" }
+    }
+
+    /**
+     * Past-performance table = the one carrying a Listing Price column (live
+     * GMP tables never have it), at whatever index it sits. Pure, tested.
+     */
+    internal fun pickPastTable(tables: List<ParsedTable>): ParsedTable? {
+        return tables.firstOrNull { it.colMap.containsKey("listing_price") && it.rows.isNotEmpty() }
+    }
+
+    internal fun matchColumnAlias(header: String, aliases: List<Pair<String, List<String>>>): String? {
         val hClean = header.lowercase()
             .replace(Regex("[^a-z0-9% ]"), " ")
             .replace(Regex("\\s+"), " ")

@@ -74,6 +74,100 @@ fun parseLooseDate(text: String, nowYear: Int = java.util.Calendar.getInstance()
     return 0
 }
 
+/**
+ * Whole days from the given loose tracker date until now (negative = future).
+ * Null when the text carries no parseable day. Calendar-based so month
+ * boundaries count correctly (yyyyMMdd keys do not subtract). Pure, tested.
+ */
+fun daysSinceLooseDate(
+    text: String,
+    now: java.util.Calendar = java.util.Calendar.getInstance()
+): Long? {
+    val key = parseLooseDate(text, now.get(java.util.Calendar.YEAR))
+    if (key <= 0) return null
+    val y = (key / 10000).toInt()
+    val m = ((key % 10000) / 100).toInt()
+    val d = (key % 100).toInt()
+    if (m !in 1..12 || d !in 1..31) return null
+    val then = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.YEAR, y)
+        set(java.util.Calendar.MONTH, m - 1)
+        set(java.util.Calendar.DAY_OF_MONTH, d)
+        set(java.util.Calendar.HOUR_OF_DAY, 12)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val start = java.util.Calendar.getInstance().apply {
+        timeInMillis = now.timeInMillis
+        set(java.util.Calendar.HOUR_OF_DAY, 12)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    return (start.timeInMillis - then.timeInMillis) / 86_400_000L
+}
+
+/** Close age above this lands in the Older section (registrar pages rotate off). */
+const val OLDER_CLOSE_AGE_DAYS = 30L
+
+/**
+ * Tracker-style lifecycle section for the allotment picker, mirroring the
+ * web dashboard: declared results first, then open, upcoming, closed
+ * awaiting allotment, and older/likely-listed last. `decided` marks issues
+ * with a decisive saved outcome (registrar answer or hand-logged result).
+ * Pure function, unit-tested. ipoSection() is untouched (legacy ordering).
+ */
+fun allotPickerSection(
+    issue: IpoIssue,
+    decided: Boolean = false,
+    todayKey: Long = todayLooseDateKey(),
+    regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap(),
+    now: java.util.Calendar = java.util.Calendar.getInstance()
+): Int {
+    if (decided || issue.isAllotmentOut(todayKey, regDir)) return 0
+    if (issue.isBiddingNotStarted()) return 2
+    val s = issue.status.lowercase()
+    if (s == "active" || s == "open") return 1
+    val age = daysSinceLooseDate(issue.issueCloseDate, now)
+    if (age != null && age > OLDER_CLOSE_AGE_DAYS) return 4
+    return 3
+}
+
+val ALLOT_PICKER_TITLES = mapOf(
+    0 to "RESULTS DECLARED",
+    1 to "OPEN NOW",
+    2 to "UPCOMING (PRE-APPLY)",
+    3 to "CLOSED — AWAITING ALLOTMENT",
+    4 to "OLDER / LIKELY LISTED"
+)
+
+/**
+ * Per-registrar issue counts for the directory strip. Normalizes the free
+ * text the trackers publish ("MUFG Intime India", "Link Intime", "KFin",
+ * ...) down to the short codes the chips understand; anything unmapped
+ * stays "Unknown" rather than guessed. Pure function, unit-tested.
+ */
+fun registrarCounts(ipos: List<IpoIssue>): List<Pair<String, Int>> {
+    fun canon(raw: String): String {
+        val l = raw.lowercase()
+        if (l.isBlank() || l == "unknown") return "Unknown"
+        if ("mufg" in l || "intime" in l) return "MUFG"
+        if ("kfin" in l) return "KFintech"
+        if ("bigshare" in l) return "Bigshare"
+        if ("skyline" in l) return "Skyline"
+        if ("cameo" in l) return "Cameo"
+        if ("maashitla" in l) return "Maashitla"
+        if ("purva" in l) return "Purva"
+        if ("beetal" in l) return "Beetal"
+        if ("mas " in " $l " || l == "mas" || "mas services" in l) return "MAS"
+        return "Unknown"
+    }
+    return ipos.groupBy { canon(it.registrar) }
+        .map { (k, v) -> k to v.size }
+        .sortedByDescending { it.second }
+}
+
 /** Recency key for recent-first ordering: allotment date, else close, else open. */
 fun ipoRecencyKey(issue: IpoIssue): Long {
     return parseLooseDate(issue.allotmentDate)
