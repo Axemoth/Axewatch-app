@@ -26,6 +26,7 @@ import com.aistudio.axewatch.trader.data.model.SectorHeatmapItem
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeIdea
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
+import com.aistudio.axewatch.trader.data.model.WatchedIssue
 import com.aistudio.axewatch.trader.data.provider.IndexConstituentsProvider
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
@@ -648,6 +649,9 @@ class AxewatchRepository(
             if (liveIpos.isNotEmpty()) {
                 // Directory-backed registrar + declared allotment dates.
                 _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
+                // Compact snapshot for the background declaration watcher:
+                // symbols/registrars/dates without re-scraping the trackers.
+                writeIpoSnapshot(_ipos.value)
             }
             if (liveGmps.isNotEmpty()) {
                 _gmpItems.value = liveGmps
@@ -751,7 +755,15 @@ class AxewatchRepository(
     }
 
     // Real IPO Allotment Checker (Link Intime AES token & KFintech API)
-    suspend fun checkIpoAllotment(pan: String, ipoSymbol: String, holderName: String = "Self"): AllotmentRecordEntity = withContext(Dispatchers.IO) {
+    suspend fun checkIpoAllotment(
+        pan: String,
+        ipoSymbol: String,
+        holderName: String = "Self",
+        // Background-watcher overrides: the worker process has no live _ipos,
+        // so it passes the snapshot's real name/registrar instead of the stub.
+        knownName: String? = null,
+        knownRegistrar: String? = null
+    ): AllotmentRecordEntity = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
         require(IpoAllotmentService.isValidPan(cleanPan)) { "Invalid PAN format" }
         val ipo = _ipos.value.find { it.symbol == ipoSymbol } ?: _ipos.value.firstOrNull() ?: IpoIssue(
@@ -767,6 +779,8 @@ class AxewatchRepository(
             issueSizeCr = 0.0,
             registrar = "Unknown"
         )
+        val effName = knownName?.takeIf { it.isNotBlank() } ?: ipo.companyName
+        val effRegistrar = knownRegistrar?.takeIf { it.isNotBlank() } ?: ipo.registrar
 
         // Mask PAN strictly for PII safety (AGENTS.md mandate)
         val masked = IpoAllotmentService.maskPan(cleanPan)
@@ -781,13 +795,13 @@ class AxewatchRepository(
             ipo.status.equals("Closed", ignoreCase = true) ||
             ipo.status.equals("Listed", ignoreCase = true) ||
             ipo.status.equals("Allotted", ignoreCase = true)
-        val reg = if (ipo.registrar.isNotBlank() && !ipo.registrar.equals("Unknown", ignoreCase = true)) {
-            ipo.registrar
+        val reg = if (effRegistrar.isNotBlank() && !effRegistrar.equals("Unknown", ignoreCase = true)) {
+            effRegistrar
         } else {
-            attributeRegistrar(ipo.companyName, ipo.symbol).registrar
+            attributeRegistrar(effName, ipo.symbol).registrar
         }
         val queryResult = allotmentService.queryAllotment(
-            cleanPan, ipo.symbol, ipo.companyName, ipo.status, remembered, declared, reg
+            cleanPan, ipo.symbol, effName, ipo.status, remembered, declared, reg
         )
 
         val sharesAllotted = queryResult.sharesAllotted
@@ -804,7 +818,7 @@ class AxewatchRepository(
         val record = AllotmentRecordEntity(
             maskedPan = masked,
             ipoSymbol = ipo.symbol,
-            ipoName = ipo.companyName,
+            ipoName = effName,
             sharesApplied = sharesApplied,
             sharesAllotted = sharesAllotted,
             status = status,
@@ -1033,16 +1047,82 @@ class AxewatchRepository(
         count
     }
 
-    suspend fun checkBulkAllotment(ipoSymbol: String): List<AllotmentRecordEntity> = withContext(Dispatchers.IO) {
+    suspend fun checkBulkAllotment(
+        ipoSymbol: String,
+        onlyPanNumbers: Set<String>? = null,
+        knownName: String? = null,
+        knownRegistrar: String? = null
+    ): List<AllotmentRecordEntity> = withContext(Dispatchers.IO) {
         val pans = panVaultDao.getAllPans().first()
+            .filter { onlyPanNumbers == null || it.panNumber in onlyPanNumbers }
         val results = mutableListOf<AllotmentRecordEntity>()
         for ((index, pan) in pans.withIndex()) {
             // Paced: 400ms is safe for registrars and gives responsive bulk checking. First PAN goes immediately.
             if (index > 0) delay(400)
-            val record = checkIpoAllotment(pan.panNumber, ipoSymbol, pan.holderName)
+            val record = checkIpoAllotment(
+                pan.panNumber, ipoSymbol, pan.holderName,
+                knownName = knownName, knownRegistrar = knownRegistrar
+            )
             results.add(record)
         }
         results
+    }
+
+    // ---- Declaration watcher support (background, directory-driven) ----
+    // One-shot readers so the worker never subscribes to Flows.
+    suspend fun pansOnce(): List<PanVaultEntity> = withContext(Dispatchers.IO) {
+        panVaultDao.getAllPans().first()
+    }
+
+    suspend fun allotmentRecordsOnce(): List<AllotmentRecordEntity> = withContext(Dispatchers.IO) {
+        panVaultDao.getAllRecords().first()
+    }
+
+    private val snapshotKey = "ipo_snapshot_v1"
+
+    /** Compact issue snapshot (symbol/name/registrar/dates/status) for the watcher. */
+    fun writeIpoSnapshot(issues: List<IpoIssue>) {
+        val store = prefs ?: return
+        try {
+            val arr = org.json.JSONArray()
+            for (i in issues.take(120)) {
+                arr.put(
+                    org.json.JSONObject()
+                        .put("s", i.symbol)
+                        .put("n", i.companyName)
+                        .put("r", i.registrar)
+                        .put("a", i.allotmentDate)
+                        .put("t", i.status)
+                )
+            }
+            store.edit().putString(snapshotKey, arr.toString()).apply()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun readIpoSnapshot(): List<WatchedIssue> {
+        try {
+            val raw = prefs?.getString(snapshotKey, null) ?: return emptyList()
+            val arr = org.json.JSONArray(raw)
+            val out = mutableListOf<WatchedIssue>()
+            for (idx in 0 until arr.length()) {
+                val o = arr.optJSONObject(idx) ?: continue
+                val symbol = o.optString("s")
+                if (symbol.isBlank()) continue
+                out.add(
+                    WatchedIssue(
+                        symbol = symbol,
+                        name = o.optString("n"),
+                        registrar = o.optString("r"),
+                        allotmentDate = o.optString("a"),
+                        status = o.optString("t")
+                    )
+                )
+            }
+            return out
+        } catch (_: Exception) {
+            return emptyList()
+        }
     }
 
     suspend fun recordManualAllotment(

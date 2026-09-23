@@ -30,6 +30,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -94,10 +95,17 @@ fun IpoScreen(
     onDeletePan: (PanVaultEntity) -> Unit = {},
     onDeleteRecord: (AllotmentRecordEntity) -> Unit = {},
     onClearHistory: () -> Unit = {},
+    alertsEnabled: Boolean = false,
+    onToggleAlerts: (Boolean) -> Unit = {},
+    allotmentSectionTick: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     // 0: IPOs, GMP & Subscription, 1: Check Allotment
     var mainSection by remember { mutableIntStateOf(0) }
+    // Notification tap-through lands here from anywhere in the app.
+    LaunchedEffect(allotmentSectionTick) {
+        if (allotmentSectionTick > 0L) mainSection = 1
+    }
     var selectedIpoForCheck by remember { mutableStateOf("") }
 
     var ipoSubTab by remember { mutableIntStateOf(0) } // 0: Issues, 1: Live GMP, 2: Past Listings
@@ -432,6 +440,8 @@ fun IpoScreen(
                 onDeletePan = onDeletePan,
                 onDeleteRecord = onDeleteRecord,
                 onClearHistory = onClearHistory,
+                alertsEnabled = alertsEnabled,
+                onToggleAlerts = onToggleAlerts,
                 initialSelectedSymbol = selectedIpoForCheck
             )
         }

@@ -79,6 +79,14 @@ History of removed fabrications (do not reintroduce):
   (service logs status codes/counts only), responses, or error text.
 - **Health**: `onSourceResult` callback → repository stats → strip shows
   measured `OPERATIONAL`/`DEGRADED`/`IDLE`/`CAPTCHA_HANDOFF`, never constants.
+- **Declaration watcher** (`data/work/AllotWatcherWorker`, 6h WorkManager,
+  connected + battery-not-low): one directory refresh per run, then paced
+  MUFG/KFin checks ONLY for declared issues x saved PANs without a decisive
+  record; captcha-walled registrars get a tap-to-open nudge, never a query.
+  Decided/notified pairs (mask-aware via `maskMatches`) never re-fire.
+  Notifications carry holder labels + masked PANs only. Toggle in the
+  Allotment tab (`allot_watch_enabled`, default on); snapshot
+  (`ipo_snapshot_v1` prefs) written on every refresh, no Room changes.
 - Tests: `IpoAllotmentServiceTest` (19 tests) pins canon/mask/parse/matching/
   labels. `parseMufgSearchXml` + `findBestCompanyMatch` are `internal` for
   white-box tests. MUFG XML tags: `SHARES`/`ALLOT`/`PEMNDG`/`NAME1`/`MSG`.

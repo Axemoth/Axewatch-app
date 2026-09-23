@@ -380,6 +380,39 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     private val _allotBusy = MutableStateFlow(false)
     val allotBusy: StateFlow<Boolean> = _allotBusy.asStateFlow()
 
+    // Declaration watcher (result alerts): background WorkManager run every
+    // 6h checks declared issues x saved PANs and notifies. Opt-out toggle;
+    // the worker itself re-checks the flag and no-ops when off.
+    private val settings =
+        application.getSharedPreferences("axewatch_settings", android.content.Context.MODE_PRIVATE)
+    private val _allotAlertsEnabled = MutableStateFlow(settings.getBoolean("allot_watch_enabled", true))
+    val allotAlertsEnabled: StateFlow<Boolean> = _allotAlertsEnabled.asStateFlow()
+
+    fun setAllotAlertsEnabled(enabled: Boolean) {
+        settings.edit().putBoolean("allot_watch_enabled", enabled).apply()
+        _allotAlertsEnabled.value = enabled
+        if (enabled) {
+            com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.schedule(getApplication())
+        } else {
+            com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.cancel(getApplication())
+        }
+    }
+
+    fun ensureAllotWatcher() {
+        if (_allotAlertsEnabled.value) {
+            com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.schedule(getApplication())
+        }
+    }
+
+    // Deep-link tick: notification taps open the IPO tab's Check Allotment
+    // section. IpoScreen collects and jumps; StateFlow replays for late UI.
+    private val _allotmentSectionTick = MutableStateFlow(0L)
+    val allotmentSectionTick: StateFlow<Long> = _allotmentSectionTick.asStateFlow()
+
+    fun requestAllotmentSection() {
+        _allotmentSectionTick.value = System.currentTimeMillis()
+    }
+
     fun savePan(pan: String, holderName: String, relation: String) {
         viewModelScope.launch {
             val ok = repository.savePan(pan, holderName, relation)

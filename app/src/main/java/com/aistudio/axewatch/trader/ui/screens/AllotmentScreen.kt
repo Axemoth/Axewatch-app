@@ -46,6 +46,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -121,6 +123,8 @@ fun AllotmentScreen(
     onDeleteRecord: (AllotmentRecordEntity) -> Unit = {},
     onClearHistory: () -> Unit = {},
     initialSelectedSymbol: String = "",
+    alertsEnabled: Boolean = false,
+    onToggleAlerts: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -193,6 +197,46 @@ fun AllotmentScreen(
         if (healthList.isNotEmpty()) {
             item {
                 RegistrarHealthStrip(healthList = healthList)
+            }
+        }
+
+        // Result alerts: background declaration watcher. Checks every saved
+        // family PAN the moment results are declared (MUFG/KFin auto, manual
+        // registrars nudge once) and notifies — no constant API polling.
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "RESULT ALERTS",
+                        color = AxeTextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = if (alertsEnabled) "On — background check ~6h when results declare"
+                        else "Off — enable for background result checks",
+                        color = AxeTextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = alertsEnabled,
+                    onCheckedChange = onToggleAlerts,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AxePrimaryCyan,
+                        checkedTrackColor = AxePrimaryCyan.copy(alpha = 0.3f)
+                    )
+                )
             }
         }
 

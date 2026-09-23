@@ -1,10 +1,16 @@
 package com.aistudio.axewatch.trader
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
@@ -42,6 +48,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
+import com.aistudio.axewatch.trader.data.work.AllotWatcherWorker
 import com.aistudio.axewatch.trader.ui.AxewatchViewModel
 import com.aistudio.axewatch.trader.ui.components.AxewatchTopBar
 import com.aistudio.axewatch.trader.ui.dialogs.AddHoldingDialog
@@ -67,13 +74,47 @@ class MainActivity : ComponentActivity() {
 
     private val viewModel: AxewatchViewModel by viewModels()
 
+    private val notifPermission = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* granted or not, alerts degrade to in-app; toggle stays honest */ }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        viewModel.ensureAllotWatcher()
+        handleAllotIntent(intent)
         enableEdgeToEdge()
         setContent {
             AxewatchTheme(darkTheme = true) {
                 AxewatchApp(viewModel = viewModel)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleAllotIntent(intent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // One ask for the alerts channel (Android 13+); never nag again.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED &&
+            !getSharedPreferences("axewatch_settings", MODE_PRIVATE)
+                .getBoolean("notif_perm_asked", false)
+        ) {
+            getSharedPreferences("axewatch_settings", MODE_PRIVATE)
+                .edit().putBoolean("notif_perm_asked", true).apply()
+            notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun handleAllotIntent(intent: Intent?) {
+        if (intent?.getStringExtra(AllotWatcherWorker.EXTRA_OPEN_TAB) == AllotWatcherWorker.TAB_ALLOTMENT) {
+            viewModel.selectTab(0)
+            viewModel.requestAllotmentSection()
         }
     }
 }
@@ -121,6 +162,8 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val savedPans by viewModel.savedPans.collectAsState()
     val allotmentRecords by viewModel.allotmentRecords.collectAsState()
     val allotBusy by viewModel.allotBusy.collectAsState()
+    val allotAlertsEnabled by viewModel.allotAlertsEnabled.collectAsState()
+    val allotmentSectionTick by viewModel.allotmentSectionTick.collectAsState()
     val tradeScanRunning by viewModel.tradeScanRunning.collectAsState()
     val tradeScanProgress by viewModel.tradeScanProgress.collectAsState()
     val registrarHealth by viewModel.registrarHealth.collectAsState()
@@ -240,7 +283,10 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     },
                     onClearHistory = {
                         viewModel.clearAllotmentHistory()
-                    }
+                    },
+                    alertsEnabled = allotAlertsEnabled,
+                    onToggleAlerts = { viewModel.setAllotAlertsEnabled(it) },
+                    allotmentSectionTick = allotmentSectionTick
                 )
                 1 -> StocksScreen(
                     indices = indices,
