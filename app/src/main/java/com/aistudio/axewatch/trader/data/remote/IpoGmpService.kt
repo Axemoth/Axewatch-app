@@ -839,20 +839,55 @@ class IpoGmpService {
     }
 
     private fun cleanCompanyName(raw: String): String {
-        var text = raw.replace(Regex("<[^>]+>"), " ")
+        val original = raw.replace(Regex("<[^>]+>"), " ")
             .replace("&amp;", "&")
             .replace("&nbsp;", " ")
             .replace(Regex("(?i)\\b(Apply IPO|View Review|Details|RHP|DRHP)\\b"), "")
             .trim()
+        var text = original
 
-        val split = text.split(Regex("(?i)\\b(?:BSE SME|NSE SME|BSE|NSE|GMP:)\\b"))
-        if (split.isNotEmpty()) {
-            text = split[0]
+        // Tracker cells GLUE exchange/status tokens onto the name on either
+        // side: "SS RetailIPO", "Anand SeamlessBSE SME", "Hero MotorsOPEN",
+        // "NSE SMEPhychem Technologies". \b does not exist between two letter
+        // runs, so \bIPO\b never matched and the suffix survived — poisoning
+        // the registrar-directory name join (KFin IPOs got mis-attributed).
+        //
+        // Peel those tokens off both ends, but never peel the whole string:
+        // "NSE" is itself a real IPO name and used to clean to "".
+        val words = "(?:BSE|NSE|SME|IPO|OPEN|CLOSED|LIVE|ACTIVE|FORTHCOMING|UPCOMING)"
+        // (regex, isLeadingPeel). A LEADING peel must not land on another
+        // bare token — "NSE IPO" must not become "IPO". A TRAILING peel is
+        // always right: it leaves the name ("NSE IPO" -> "NSE").
+        val strippers = listOf(
+            Regex("(?i)^\\s*(?:BSE|NSE)\\s+(?=[A-Za-z]{3})") to true,
+            Regex("(?i)^\\s*(?:BSE|NSE)(?=[A-Za-z]{3})") to true,
+            Regex("(?i)^\\s*$words\\s+(?=[A-Za-z]{3})") to true,
+            Regex("(?i)^\\s*$words(?=[A-Za-z]{3})") to true,
+            Regex("(?i)\\s+$words\\s*$") to false,
+            Regex("(?i)$words\\s*$") to false,
+            // A bare single-letter status code only strips when whitespace
+            // separates it; otherwise "Tata" loses its "a".
+            Regex("\\s+[UOCLA]$") to false
+        )
+        val bareToken = Regex("(?i)^(?:BSE|NSE|SME|IPO|OPEN|CLOSED|LIVE|ACTIVE|FORTHCOMING|UPCOMING|[UOCLA])$")
+        var changed = true
+        var guard = 0
+        while (changed && guard < 10) {
+            changed = false
+            guard++
+            for ((re, isLeading) in strippers) {
+                val next = text.replace(re, "").trim()
+                if (next.isNotBlank() && next.length < text.length &&
+                    !(isLeading && bareToken.matches(next))
+                ) {
+                    text = next
+                    changed = true
+                    break
+                }
+            }
         }
-        return text.replace(Regex("(?i)\\b(SME|IPO)\\b"), "")
-            .replace(Regex("\\s+[UOCLA]$"), "")
-            .replace(Regex("\\s+"), " ")
-            .trim()
+        if (text.isBlank()) text = original
+        return text.replace(Regex("\\s+"), " ").trim()
     }
 
     private fun parseGmpField(text: String): Pair<Double, Double> {
@@ -951,6 +986,9 @@ class IpoGmpService {
         }
         return null
     }
+
+    /** Test seam for the pure name cleaner (glued-status-suffix stripping). */
+    internal fun cleanCompanyNameForTest(raw: String): String = cleanCompanyName(raw)
 
     private fun Double.roundToOneDecimal(): Double {
         return (this * 10.0).roundToInt() / 10.0

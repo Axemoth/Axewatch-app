@@ -70,8 +70,24 @@ History of removed fabrications (do not reintroduce):
 - **Tolerant share counts**: `parseShareCount` handles ints, "1,234"
   strings, and decimals (org.json `optInt` returns 0 for string forms and
   once dropped real allotments); same tolerance in the MUFG XML parser.
-- **MUFG dropdown rotates**: live list + remembered company IDs merge into
-  append-only SharedPreferences memory so past IPOs stay checkable.
+- **Cleaner must survive glued tracker cells**: `cleanCompanyName` peels
+  exchange/status tokens off BOTH ends ("SS RetailIPO", "Hero MotorsOPEN",
+  "Anand SeamlessBSE SME", "NSE SMEPhychem Technologies"). A leading peel may
+  not land on another bare token ("NSE IPO" → "NSE", never "IPO"), a trailing
+  peel always may, and a bare `[UOCLA]` code only strips after whitespace
+  ("Tata" keeps its "a"; "NSE" is a real IPO name, never cleans to "").
+  Reason: uncleaned names missed the directory join, so KFin IPOs were probed
+  and stored against MUFG.
+- **KFin outage is real and persistent**: their gateway
+  (`...execute-api.../prod/api/query?type=pan`) returns HTTP 502 for every
+  request right now — the live portal is broken too. On KFin transport failure
+  the app now falls through to MUFG instead of returning, and records are
+  attributed to the DIRECTORY registrar, never the probing source.
+- **MUFG exposes only ~5 rotating companies** via `GetDetails`; older issues
+  are reachable only through remembered `mufg_ids` (live list + remembered IDs
+  merge into append-only SharedPreferences so past IPOs stay checkable).
+  Expect MUFG "not found" on a fresh install for anything outside that window
+  — fall through to KFin.
 - **Budget**: 1.5s MUFG / 2s KFin pacing, one retry on transport blips only,
   never on throttle (429/503). Bulk checks reuse one warmed session.
 - **PII**: strict `AAAAA9999A` regex gate; masked `AB*****F` display only;

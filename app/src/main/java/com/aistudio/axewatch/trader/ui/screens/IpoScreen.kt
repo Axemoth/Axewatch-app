@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -43,6 +44,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
@@ -594,7 +597,9 @@ private fun IpoIssueCard(
                         if (ipo.allotmentDate.isNotBlank()) append(" · Allot: ${ipo.allotmentDate}")
                     },
                     color = AxeTextSecondary,
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
 
                 val matchedLink = findMatchingRegistrarLink(ipo.registrar, registrarLinks)
@@ -617,7 +622,11 @@ private fun IpoIssueCard(
                             text = "Reg: ${ipo.registrar}",
                             color = AxePrimaryCyan,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
                         )
                         Spacer(modifier = Modifier.width(3.dp))
                         Icon(
@@ -631,7 +640,10 @@ private fun IpoIssueCard(
                     Text(
                         text = "Reg: ${ipo.registrar}",
                         color = AxeTextMuted,
-                        fontSize = 11.sp
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        softWrap = false,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
             }
@@ -825,12 +837,46 @@ private fun IpoIssueCard(
 }
 
 @Composable
-private fun SubscriptionItem(label: String, value: String, subText: String? = null) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label, color = AxeTextMuted, fontSize = 10.sp)
-        Text(value, color = AxeTextPrimary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+private fun RowScope.SubscriptionItem(label: String, value: String, subText: String? = null) {
+    // weight(1f) + maxLines(1) + ellipsis: five items in one Row on a narrow
+    // phone otherwise squeeze to a few pixels and wrap one letter per line
+    // (the "vertical text" bug). Never shrink below a readable cell.
+    Column(
+        modifier = Modifier.weight(1f),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Text(
+            text = label,
+            color = AxeTextMuted,
+            fontSize = 10.sp,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            text = value,
+            color = AxeTextPrimary,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            softWrap = false,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
         if (subText != null) {
-            Text(subText, color = AxeTextMuted, fontSize = 8.sp)
+            Text(
+                text = subText,
+                color = AxeTextMuted,
+                fontSize = 8.sp,
+                maxLines = 1,
+                softWrap = false,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     }
 }

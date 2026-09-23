@@ -808,7 +808,17 @@ class AxewatchRepository(
         // Applied unknown unless the registrar reported it: 0 renders "—".
         val sharesApplied = if (queryResult.sharesApplied > 0) queryResult.sharesApplied else 0
         val status = queryResult.status
-        val registrar = if (queryResult.source.isNotBlank()) queryResult.source else ipo.registrar
+        // Attribute the record to the DIRECTORY registrar when we know it.
+        // The probing source is a transport detail: a KFin IPO probed through
+        // MUFG's rotating list used to get stored (and displayed) as "MUFG".
+        val knownDisplayRegistrar = effRegistrar.takeIf {
+            it.isNotBlank() && !it.equals("Unknown", ignoreCase = true)
+        }
+        val registrar = when {
+            knownDisplayRegistrar != null -> knownDisplayRegistrar
+            queryResult.source.isNotBlank() -> queryResult.source
+            else -> ipo.registrar
+        }
         val appNo = if (queryResult.applicationNo.isNotBlank() && queryResult.applicationNo != "N/A") {
             queryResult.applicationNo
         } else {

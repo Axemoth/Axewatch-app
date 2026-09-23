@@ -265,40 +265,35 @@ class IpoAllotmentService {
 
         // 3. Known KFintech Issue (e.g. SS Retail)
         val isKfin = regLower.contains("kfin")
+        var kfinAttempted = false
         if (isKfin) {
+            kfinAttempted = true
             val t0 = System.currentTimeMillis()
             try {
                 val kfinResult = checkKfinAllotment(cleanPan, ipoCompanyName)
                 onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
                 if (kfinResult.found) {
                     return@withContext kfinResult
-                } else {
-                    return@withContext AllotmentQueryResult(
-                        found = false,
-                        source = "KFintech",
-                        companyName = ipoCompanyName,
-                        sharesApplied = 0,
-                        sharesAllotted = 0,
-                        status = "NOT_APPLIED",
-                        applicationNo = "N/A",
-                        applicantName = "",
-                        note = "Checked on KFintech: No application record found for PAN ${maskPan(cleanPan)} for $ipoCompanyName."
-                    )
                 }
-            } catch (e: Exception) {
-                onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
-                Log.w(TAG, "KFintech lookup failed: ${e.message}")
+                // A real answer from the registrar (no record) is final.
                 return@withContext AllotmentQueryResult(
                     found = false,
                     source = "KFintech",
                     companyName = ipoCompanyName,
                     sharesApplied = 0,
                     sharesAllotted = 0,
-                    status = "LOOKUP_FAILED",
-                    applicationNo = "",
+                    status = "NOT_APPLIED",
+                    applicationNo = "N/A",
                     applicantName = "",
-                    note = "Could not reach KFintech server (${e.message ?: "network error"}). Tap 'Open KFintech Portal' to check directly or record your outcome."
+                    note = "Checked on KFintech: No application record found for PAN ${maskPan(cleanPan)} for $ipoCompanyName."
                 )
+            } catch (e: Exception) {
+                onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
+                Log.w(TAG, "KFintech lookup failed: ${e.message}")
+                // KFin is frequently unreachable (their gateway 502s). Do NOT
+                // stop here and never label the issue by the probing source:
+                // fall through to MUFG so a KFin IPO is still checked, and the
+                // final verdict keeps the directory's registrar.
             }
         }
 
@@ -323,7 +318,13 @@ class IpoAllotmentService {
                 try {
                     val mufgResult = checkMufgAllotment(cleanPan, matchedCompany.id, matchedCompany.name)
                     onSourceResult("allot_mufg", true, (System.currentTimeMillis() - t0).toInt())
-                    return@withContext mufgResult
+                    // A KFin-mapped issue must never be answered by (or
+                    // attributed to) MUFG. If MUFG has no record, keep going
+                    // so KFin gets its turn instead of a bogus MUFG verdict.
+                    if (mufgResult.found || !isKfin) {
+                        return@withContext mufgResult
+                    }
+                    registrarCompanyFound = false
                 } catch (e: Exception) {
                     onSourceResult("allot_mufg", false, (System.currentTimeMillis() - t0).toInt())
                     transportFailures++
@@ -338,13 +339,17 @@ class IpoAllotmentService {
         try {
             val t0 = System.currentTimeMillis()
             try {
-                val kfinResult = checkKfinAllotment(cleanPan, ipoCompanyName)
-                onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
-                if (kfinResult.found) {
-                    return@withContext kfinResult
+                if (!kfinAttempted) {
+                    val kfinResult = checkKfinAllotment(cleanPan, ipoCompanyName)
+                    onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
+                    if (kfinResult.found) {
+                        return@withContext kfinResult
+                    }
                 }
             } catch (e: Exception) {
-                onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
+                if (!kfinAttempted) {
+                    onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
+                }
                 transportFailures++
                 Log.w(TAG, "KFintech lookup failed: ${e.message}")
             }
