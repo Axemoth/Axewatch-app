@@ -103,6 +103,23 @@ History of removed fabrications (do not reintroduce):
   Notifications carry holder labels + masked PANs only. Toggle in the
   Allotment tab (`allot_watch_enabled`, default on); snapshot
   (`ipo_snapshot_v1` prefs) written on every refresh, no Room changes.
+- Notification delivery is acknowledged only when app/channel notifications are
+  enabled and posting succeeds. Replay pending decisive saved records before
+  skipping decided pairs; never query again merely to retry notification delivery.
+  Background checks must carry `knownDeclared=true`; repository construction must
+  not launch market refreshes. Startup refresh belongs to the ViewModel lifecycle.
+- Directory/MUFG/KFin partial matches must be unique; both names must meet the
+  10-character guard. Preserve empty table cells so column positions do not shift.
+  Remembered IDs identify a registrar but do not prove a current declaration.
+  Partial directory refreshes retain cached entries and retry after 15 minutes;
+  complete directory refreshes retain the 24-hour TTL.
+- A registrar company dropdown proves attribution only. Do not report
+  `NOT_ALLOTTED` or `NOT_APPLIED` before a declared allotment date/status.
+  Malformed responses, empty tokens, throttles, and transport errors are
+  `LOOKUP_FAILED`, never negative application outcomes. A known KFintech issue
+  must not be answered by probing MUFG (or vice versa). KFintech 429/503 must
+  not be retried. The live Yahoo quote/index refresh staggers request starts
+  by 400 ms to avoid burst throttles without adding feeds.
 - Tests: `IpoAllotmentServiceTest` (19 tests) pins canon/mask/parse/matching/
   labels. `parseMufgSearchXml` + `findBestCompanyMatch` are `internal` for
   white-box tests. MUFG XML tags: `SHARES`/`ALLOT`/`PEMNDG`/`NAME1`/`MSG`.

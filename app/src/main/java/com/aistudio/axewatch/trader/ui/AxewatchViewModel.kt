@@ -253,18 +253,26 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     val isRefreshing: StateFlow<Boolean> = _isRefreshing.asStateFlow()
 
     fun refreshAll() {
+        if (_isRefreshing.value) return
+        _isRefreshing.value = true
         viewModelScope.launch {
-            _isRefreshing.value = true
-            repository.refreshMarket()
-            _selectedStock.value?.let { st ->
-                val updated = stocks.value.find { it.symbol == st.symbol } ?: st
-                _selectedStock.value = updated
-                val freshCandles = repository.fetchFreshCandles(updated.symbol, _selectedTimeframe.value)
-                _selectedStockCandles.value = freshCandles
-                val freshOutlook = repository.fetchFreshOutlook(updated.symbol, freshCandles)
-                _selectedStockOutlook.value = freshOutlook
+            try {
+                repository.refreshMarket()
+                _selectedStock.value?.let { st ->
+                    val updated = stocks.value.find { it.symbol == st.symbol } ?: st
+                    _selectedStock.value = updated
+                    val freshCandles = repository.fetchFreshCandles(updated.symbol, _selectedTimeframe.value)
+                    _selectedStockCandles.value = freshCandles
+                    val freshOutlook = repository.fetchFreshOutlook(updated.symbol, freshCandles)
+                    _selectedStockOutlook.value = freshOutlook
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                _toastMessage.emit("Refresh failed. Please try again.")
+            } finally {
+                _isRefreshing.value = false
             }
-            _isRefreshing.value = false
         }
     }
 
@@ -535,5 +543,9 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                 _toastMessage.emit("Added $symbol to Watchlist")
             }
         }
+    }
+    // Start only after all state fields are initialized; workers do not refresh markets.
+    init {
+        refreshAll()
     }
 }

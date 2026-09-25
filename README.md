@@ -4,6 +4,23 @@ A native Android live dashboard and quantitative trading companion for Indian fi
 
 Built with **Jetpack Compose**, **Kotlin Coroutines & Flow**, **Room SQLite**, and a pure Kotlin technical analysis engine.
 
+Allotment alerts use Android WorkManager (roughly every six hours while connected
+and the battery is not low). Allow notifications in Android settings and enable
+the Allotment alert toggle. Blocked notifications remain pending: saved decisive
+results are delivered on a later worker run without another registrar query.
+Bigshare and other CAPTCHA-protected registrars require a manual check.
+
+Registrar matching prefers exact company names and refuses ambiguous partial
+matches. IPO/GMP rows display as soon as their feed arrives while registrar
+enrichment continues; a failed refresh releases the loading indicator for retry.
+An allotted application shows its reported share count. An application with
+zero allotted shares shows **Not Allotted**; an explicit no-record answer for
+a declared issue shows **Not Applied**. Registrar outages, malformed responses,
+and throttling show **Lookup Failed — Retry**. A company appearing in a
+registrar dropdown does not by itself mean allotment results are published.
+Market quote requests are staggered to reduce Yahoo throttling; missing quotes
+stay unavailable until a later refresh.
+
 ---
 
 ## Key Features & Architecture

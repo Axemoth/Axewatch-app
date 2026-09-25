@@ -121,12 +121,13 @@ const val OLDER_CLOSE_AGE_DAYS = 30L
 fun allotPickerSection(
     issue: IpoIssue,
     decided: Boolean = false,
-    todayKey: Long = todayLooseDateKey(),
+    todayKey: Long? = null,
     regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap(),
     now: java.util.Calendar = java.util.Calendar.getInstance()
 ): Int {
-    if (decided || issue.isAllotmentOut(todayKey, regDir)) return 0
-    if (issue.isBiddingNotStarted()) return 2
+    val effectiveToday = todayKey ?: todayLooseDateKey(now)
+    if (decided || issue.isAllotmentOut(effectiveToday, regDir)) return 0
+    if (issue.isBiddingNotStarted(effectiveToday)) return 2
     val s = issue.status.lowercase()
     if (s == "active" || s == "open") return 1
     val age = daysSinceLooseDate(issue.issueCloseDate, now)
@@ -135,7 +136,7 @@ fun allotPickerSection(
 }
 
 val ALLOT_PICKER_TITLES = mapOf(
-    0 to "RESULTS DECLARED",
+    0 to "ALLOTMENT DUE / RESULTS",
     1 to "OPEN NOW",
     2 to "UPCOMING (PRE-APPLY)",
     3 to "CLOSED — AWAITING ALLOTMENT",
@@ -181,37 +182,28 @@ fun ipoRecencyKey(issue: IpoIssue): Long {
  * Returns true if the IPO issue is in pre-apply stage and bidding has not opened yet.
  * IPOs in this stage will naturally have no subscription figures on stock exchanges.
  */
-fun IpoIssue.isBiddingNotStarted(): Boolean {
-    val openKey = parseLooseDate(issueOpenDate)
-    val todayKey = todayLooseDateKey()
+fun IpoIssue.isBiddingNotStarted(todayKey: Long = todayLooseDateKey()): Boolean {
+    val openKey = parseLooseDate(issueOpenDate, (todayKey / 10000).toInt())
     if (openKey > 0 && openKey > todayKey) return true
     val s = status.lowercase()
     return s == "forthcoming" || s == "upcoming" || s.contains("pre")
 }
 
-fun todayLooseDateKey(): Long {
-    val cal = java.util.Calendar.getInstance()
+fun todayLooseDateKey(cal: java.util.Calendar = java.util.Calendar.getInstance()): Long {
     return cal.get(java.util.Calendar.YEAR) * 10000L +
            (cal.get(java.util.Calendar.MONTH) + 1) * 100L +
            cal.get(java.util.Calendar.DAY_OF_MONTH)
 }
 
 /**
- * Checks if the issue has its allotment results definitively published on the registrar.
- * Authoritative registrar entries (Link Intime live company API or Bigshare public dropdowns)
- * provide 100% verified confirmation without hammering search APIs.
+ * A tracker status can confirm allotment; appearing in a registrar's company
+ * dropdown only confirms its registrar, not that results have been published.
  */
 fun IpoIssue.isAllotmentOutOnRegistrar(
     regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
 ): Boolean {
-    val canonName = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName.ifBlank { symbol })
-    if (canonName.isEmpty()) return false
-    val hit = regDir[canonName] ?: regDir.values.find {
-        com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.name, companyName)
-    }
-    if (hit != null && hit.authoritative) return true
     val s = status.lowercase()
-    return s == "allotted"
+    return s == "allotted" || s == "listed"
 }
 
 /**
@@ -223,24 +215,33 @@ fun IpoIssue.isAllotmentDayOrAfter(
     regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
 ): Boolean {
     if (isAllotmentOutOnRegistrar(regDir)) return true
-    val allotKey = parseLooseDate(allotmentDate)
+    val allotKey = parseLooseDate(allotmentDate, (todayKey / 10000).toInt())
     if (allotKey > 0) {
-        val diff = todayKey - allotKey
+        val diff = daysBetweenDateKeys(allotKey, todayKey)
         if (diff in 0..2) return true
     }
     return false
 }
 
+/** Calendar days between yyyyMMdd keys; integer subtraction breaks at month end. */
+fun daysBetweenDateKeys(from: Long, to: Long): Long {
+    fun atNoonUtc(key: Long) = java.util.GregorianCalendar(java.util.TimeZone.getTimeZone("UTC")).apply {
+        clear()
+        set((key / 10000).toInt(), ((key % 10000) / 100).toInt() - 1, (key % 100).toInt(), 12, 0)
+    }.timeInMillis
+    return (atNoonUtc(to) - atNoonUtc(from)) / 86_400_000L
+}
+
 /**
- * Checks if the allotment results are out (via authoritative registrar list OR past allotment date).
+ * Checks whether the tracker status or published schedule makes the issue due.
  */
 fun IpoIssue.isAllotmentOut(
     todayKey: Long = todayLooseDateKey(),
     regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
 ): Boolean {
     if (isAllotmentOutOnRegistrar(regDir)) return true
-    val allotKey = parseLooseDate(allotmentDate)
-    if (allotKey in 1..todayKey && !status.equals("Forthcoming", ignoreCase = true) && !isBiddingNotStarted()) {
+    val allotKey = parseLooseDate(allotmentDate, (todayKey / 10000).toInt())
+    if (allotKey in 1..todayKey && !status.equals("Forthcoming", ignoreCase = true) && !isBiddingNotStarted(todayKey)) {
         return true
     }
     val s = status.lowercase()
@@ -257,31 +258,25 @@ fun IpoIssue.getAllotmentBadge(
     todayKey: Long = todayLooseDateKey(),
     regDir: Map<String, com.aistudio.axewatch.trader.data.remote.DirectoryEntry> = emptyMap()
 ): AllotmentBadgeInfo {
-    val canonName = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName.ifBlank { symbol })
-    val hit = regDir[canonName] ?: regDir.values.find {
-        com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.name, companyName)
-    }
+    val hit = com.aistudio.axewatch.trader.data.remote.RegistrarDirectory.lookup(regDir, companyName.ifBlank { symbol })
 
-    if (hit != null && hit.authoritative) {
-        if (hit.registrar == "bigshare") {
-            return AllotmentBadgeInfo("\u2713 Listed on Bigshare", isGreenCheck = true)
-        }
-        return AllotmentBadgeInfo("\u2713 Allotment Out", isGreenCheck = true)
-    }
     if (status.equals("Allotted", ignoreCase = true)) {
         return AllotmentBadgeInfo("\u2713 Allotted", isGreenCheck = true)
     }
-    val allotKey = parseLooseDate(allotmentDate)
+    val allotKey = parseLooseDate(allotmentDate, (todayKey / 10000).toInt())
     if (allotKey > 0) {
         if (allotKey == todayKey) {
-            return AllotmentBadgeInfo("\u2713 Allotment Today", isGreenCheck = true)
+            return AllotmentBadgeInfo("Allotment scheduled today", isGreenCheck = false)
         }
         if (allotKey < todayKey && !status.equals("Forthcoming", ignoreCase = true)) {
-            return AllotmentBadgeInfo("\u2713 Results Declared", isGreenCheck = true)
+            return AllotmentBadgeInfo("Allotment date passed", isGreenCheck = false)
         }
         if (allotKey > todayKey) {
             return AllotmentBadgeInfo("Allot $allotmentDate", isGreenCheck = false)
         }
+    }
+    if (hit != null && hit.authoritative) {
+        return AllotmentBadgeInfo("Listed at ${hit.displayName()}", isGreenCheck = false)
     }
     if (isBiddingNotStarted()) {
         return AllotmentBadgeInfo("Pre-Apply", isGreenCheck = false)

@@ -300,7 +300,7 @@ fun IpoScreen(
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Column {
                                                 Text(
-                                                    text = "Results Out & Allotment Today ($allotmentActiveCount)",
+                                                    text = "Allotment status & schedule ($allotmentActiveCount)",
                                                     color = AxeEmeraldGreen,
                                                     fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold

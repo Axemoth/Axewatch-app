@@ -165,23 +165,38 @@ class IpoAllotmentServiceTest {
     }
 
     @Test
-    fun `registrar error message yields NOT_APPLIED with note`() {
+    fun `registrar no-record message yields NOT_APPLIED without exposing raw text`() {
         val r = svc.parseMufgSearchXml(
             "<NewDataSet><Table><MSG>No records found</MSG></Table></NewDataSet>",
             "Manika Plastech"
         )
         assertFalse(r.found)
         assertEquals("NOT_APPLIED", r.status)
-        assertEquals("No records found", r.note)
+        assertEquals("No application record found on MUFG", r.note)
     }
 
     @Test
-    fun `garbage XML never crashes and never reports applied`() {
-        val r = svc.parseMufgSearchXml("this is not xml <<<", "Manika Plastech")
-        assertFalse(r.found)
-        assertEquals("NOT_APPLIED", r.status)
-        assertEquals(0, r.sharesApplied)
-        assertEquals(0, r.sharesAllotted)
+    fun `garbage XML is a failed lookup, never not applied`() {
+        org.junit.Assert.assertThrows(AllotmentTransportException::class.java) {
+            svc.parseMufgSearchXml("this is not xml <<<", "Manika Plastech")
+        }
+    }
+
+    @Test
+    fun `registrar error message is a failed lookup`() {
+        org.junit.Assert.assertThrows(AllotmentTransportException::class.java) {
+            svc.parseMufgSearchXml(
+                "<NewDataSet><Table><MSG>Invalid token</MSG></Table></NewDataSet>",
+                "Manika Plastech"
+            )
+        }
+    }
+
+    @Test
+    fun `KFin success without a records array is a failed lookup`() {
+        org.junit.Assert.assertThrows(AllotmentTransportException::class.java) {
+            svc.parseKfinJson("{\"error\":\"gateway failed\"}", "SS Retail")
+        }
     }
 
     @Test

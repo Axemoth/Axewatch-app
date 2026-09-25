@@ -9,6 +9,20 @@ import org.junit.Test
 /** Pins the declaration watcher's due-decision: declared-only, deduped, split auto/manual. */
 class AllotWatcherTest {
 
+    @Test
+    fun `blocked saved result remains pending while delivered result is deduped`() {
+        val pan = com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity("ABCDE1234F", "Self")
+        val record = com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity(
+            maskedPan = pan.maskedPan, ipoSymbol = "ACME", ipoName = "Acme", sharesApplied = 10,
+            sharesAllotted = 10, status = "ALLOTTED", registrar = "MUFG", checkedAt = 1
+        )
+        val records = listOf(record, record.copy(status = "LOOKUP_FAILED", checkedAt = 2))
+        assertEquals(1, pendingAllotNotifications(records, listOf(pan), emptySet()).size)
+        assertTrue(pendingAllotNotifications(records, listOf(pan), setOf(allotNotifyKey("ACME", pan.maskedPan))).isEmpty())
+        val collision = pan.copy(panNumber = "ABZZZ9999F")
+        assertTrue(pendingAllotNotifications(records, listOf(pan, collision), emptySet()).isEmpty())
+    }
+
     private fun issue(
         symbol: String,
         registrar: String = "MUFG Intime",
@@ -28,9 +42,9 @@ class AllotWatcherTest {
     }
 
     @Test
-    fun `authoritative directory hit declares regardless of date`() {
+    fun `registrar listing alone does not prove results are declared`() {
         val dir = mapOf("zzz" to DirectoryEntry("bigshare", "Acme Forgings Ltd", authoritative = true))
-        assertTrue(
+        assertFalse(
             isDeclaredOut(
                 WatchedIssue("ACME", "Acme Forgings Ltd", "Bigshare", status = "Active"),
                 dir = dir, todayKey = 20260922L
@@ -68,7 +82,7 @@ class AllotWatcherTest {
 
     @Test
     fun `fresh directory registrar beats stale snapshot unknown`() {
-        val dir = mapOf("zzz" to DirectoryEntry("mufg", "Acme Forgings Ltd", authoritative = true))
+        val dir = mapOf("zzz" to DirectoryEntry("mufg", "Acme Forgings Ltd", "21 Sep 2026", authoritative = true))
         val due = computeDueIssues(
             listOf(WatchedIssue("ACME", "Acme Forgings Ltd", "Unknown", status = "Active")),
             dir = dir, todayKey = 20260922L

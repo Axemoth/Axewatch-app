@@ -48,6 +48,16 @@ data class DirectoryEntry(
 
 object RegistrarDirectory {
 
+    /** Refuse ambiguous truncated names rather than route a PAN to another IPO. */
+    fun lookup(directory: Map<String, DirectoryEntry>, name: String): DirectoryEntry? {
+        val key = IpoAllotmentService.canonIpoName(name)
+        if (key.isBlank()) return null
+        directory[key]?.let { return it }
+        val exact = directory.values.filter { IpoAllotmentService.canonIpoName(it.name) == key }
+        if (exact.isNotEmpty()) return exact.singleOrNull()
+        return directory.values.filter { IpoAllotmentService.ipoNamesMatch(it.name, name) }.singleOrNull()
+    }
+
     const val IPOMARKET_URL = "https://ipomarket.in/allotment"
     const val IPOWATCH_ALLOT_URL = "https://ipowatch.in/ipo-allotment-status-how-to-check/"
     val BIGSHARE_URLS = listOf(
@@ -98,7 +108,7 @@ object RegistrarDirectory {
 
     private fun tableCells(rowHtml: String): List<String> {
         val cellRe = Regex("<t[dh][^>]*>(.*?)</t[dh]>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-        return cellRe.findAll(rowHtml).map { cellText(it.groupValues[1]) }.filter { it.isNotEmpty() }.toList()
+        return cellRe.findAll(rowHtml).map { cellText(it.groupValues[1]) }.toList()
     }
 
     private fun tableRows(tableHtml: String): List<String> {
@@ -191,7 +201,7 @@ object RegistrarDirectory {
             val key = canon(e.name)
             if (key.isEmpty() || e.registrar.isEmpty()) continue
             val cur = directory[key]
-            if (cur == null) {
+            if (cur == null || (e.authoritative && !cur.authoritative)) {
                 directory[key] = e
             } else if (e.allotmentDate.isNotBlank() && cur.allotmentDate.isBlank()) {
                 directory[key] = cur.copy(allotmentDate = e.allotmentDate)

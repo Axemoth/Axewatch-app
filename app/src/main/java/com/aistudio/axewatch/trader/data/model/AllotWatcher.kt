@@ -1,7 +1,9 @@
 package com.aistudio.axewatch.trader.data.model
 
 import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
-import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
+import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
+import com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity
+import com.aistudio.axewatch.trader.data.local.entity.maskMatches
 
 /**
  * Declaration watcher: "results are out on the official registrar, go check".
@@ -37,6 +39,22 @@ data class DueSet(
 /** Notification dedupe key. `panPart` is a masked PAN, or "*" for issue-level nudges. */
 fun allotNotifyKey(symbol: String, panPart: String): String = "$symbol|$panPart"
 
+/** Stored decisive outcomes remain deliverable after a blocked notification. */
+fun pendingAllotNotifications(
+    records: List<AllotmentRecordEntity>,
+    pans: List<PanVaultEntity>,
+    notified: Set<String>
+): List<Pair<AllotmentRecordEntity, PanVaultEntity>> = records
+    .filter { it.isAllotted || it.isNotAllotted }
+    .sortedByDescending { it.checkedAt }
+    .mapNotNull { record ->
+        // A display mask is not a unique identity: never guess a holder.
+        val pan = pans.singleOrNull { maskMatches(it.maskedPan, record.maskedPan) }
+        if (pan == null || allotNotifyKey(record.ipoSymbol, pan.maskedPan) in notified) null
+        else record to pan
+    }
+    .distinctBy { (record, pan) -> allotNotifyKey(record.ipoSymbol, pan.maskedPan) }
+
 /** True when the registrar offers an automated on-device PAN search. */
 fun registrarAutoCheckable(registrar: String): Boolean {
     val l = registrar.lowercase()
@@ -45,23 +63,20 @@ fun registrarAutoCheckable(registrar: String): Boolean {
 
 /**
  * Issues whose results are declared on the official registrar: a directory
- * allotment date at/past today (and not pre-bidding), an authoritative
- * directory listing, or an Allotted/Listed tracker status. Pure, tested.
+ * allotment date at/past today (and not pre-bidding), or an
+ * Allotted/Listed tracker status. A company directory listing alone can
+ * precede declaration, so it cannot prove a negative outcome. Pure, tested.
  */
 fun isDeclaredOut(
     issue: WatchedIssue,
     dir: Map<String, DirectoryEntry> = emptyMap(),
     todayKey: Long = todayLooseDateKey()
 ): Boolean {
-    val canon = IpoAllotmentService.canonIpoName(issue.name.ifBlank { issue.symbol })
-    val hit = if (canon.isNotEmpty()) {
-        dir[canon] ?: dir.values.find { IpoAllotmentService.ipoNamesMatch(it.name, issue.name) }
-    } else null
-    if (hit != null && hit.authoritative) return true
+    val hit = com.aistudio.axewatch.trader.data.remote.RegistrarDirectory.lookup(dir, issue.name.ifBlank { issue.symbol })
     val s = issue.status.lowercase()
     if (s == "allotted" || s == "listed") return true
-    val date = issue.allotmentDate.ifBlank { hit?.allotmentDate.orEmpty() }
-    val key = parseLooseDate(date)
+    val date = hit?.allotmentDate?.takeIf { it.isNotBlank() } ?: issue.allotmentDate
+    val key = parseLooseDate(date, (todayKey / 10000).toInt())
     if (key in 1..todayKey) {
         if (s == "forthcoming" || s == "upcoming" || s.contains("pre")) return false
         return true
@@ -90,10 +105,7 @@ fun computeDueIssues(
         if (!isDeclaredOut(issue, dir, todayKey)) continue
         // Fresh directory beats a possibly-stale snapshot registrar: an
         // "Unknown" snapshot row attributed to MUFG/KFin today auto-checks.
-        val canon = IpoAllotmentService.canonIpoName(issue.name.ifBlank { issue.symbol })
-        val hit = if (canon.isNotEmpty()) {
-            dir[canon] ?: dir.values.find { IpoAllotmentService.ipoNamesMatch(it.name, issue.name) }
-        } else null
+        val hit = com.aistudio.axewatch.trader.data.remote.RegistrarDirectory.lookup(dir, issue.name.ifBlank { issue.symbol })
         val effRegistrar = hit?.registrar?.takeIf { it.isNotBlank() } ?: issue.registrar
         val eff = if (effRegistrar != issue.registrar) issue.copy(registrar = effRegistrar) else issue
         if (registrarAutoCheckable(effRegistrar)) auto.add(eff) else manual.add(eff)

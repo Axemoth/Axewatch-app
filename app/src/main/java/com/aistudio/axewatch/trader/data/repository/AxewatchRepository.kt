@@ -36,7 +36,6 @@ import com.aistudio.axewatch.trader.data.remote.IpoGmpService
 import com.aistudio.axewatch.trader.data.remote.MutualFundService
 import com.aistudio.axewatch.trader.data.remote.NewsSentimentService
 import com.aistudio.axewatch.trader.data.remote.YahooFinanceService
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -45,8 +44,9 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -141,27 +141,21 @@ class AxewatchRepository(
     // tracker status still read "Active".
     private var regDirCache: Pair<Long, Map<String, DirectoryEntry>> = 0L to emptyMap()
     private val regDirTtlMs = 24 * 3600_000L
+    private val regDirMutex = Mutex()
 
     private fun lookupDirectory(
         dir: Map<String, DirectoryEntry>,
         issueName: String,
         symbol: String
     ): DirectoryEntry? {
-        val wantName = issueName.ifBlank { symbol }
-        val want = IpoAllotmentService.canonIpoName(wantName)
-        if (want.isEmpty()) return null
-        dir[want]?.let { return it }
-        for ((_, e) in dir) {
-            if (IpoAllotmentService.ipoNamesMatch(e.name, wantName)) return e
-        }
-        return null
+        return RegistrarDirectory.lookup(dir, issueName.ifBlank { symbol })
     }
 
     suspend fun registrarDirectory(force: Boolean = false): Map<String, DirectoryEntry> =
-        withContext(Dispatchers.IO) {
+        withContext(Dispatchers.IO) { regDirMutex.withLock {
             val (ts, cached) = regDirCache
             if (!force && cached.isNotEmpty() && System.currentTimeMillis() - ts < regDirTtlMs) {
-                return@withContext cached
+                return@withLock cached
             }
             val dir = mutableMapOf<String, DirectoryEntry>()
             val canon = { n: String -> IpoAllotmentService.canonIpoName(n) }
@@ -179,46 +173,53 @@ class AxewatchRepository(
             } catch (_: Exception) {
             }
             for ((k, v) in readIdMemory("mufg_ids")) {
-                if (k !in dir) dir[k] = DirectoryEntry("mufg", v.name, authoritative = true)
+                if (k !in dir) dir[k] = DirectoryEntry("mufg", v.name)
             }
             // 2. Bigshare public dropdowns, all mirrors (authoritative).
             try {
-                for ((_, name) in bigshareDirectory()) {
+                val live = bigshareDirectory()
+                for ((_, name) in live) {
                     val k = canon(name)
-                    if (k.isNotEmpty() && k !in dir) {
+                    if (k.isNotEmpty() && dir[k]?.authoritative != true) {
                         dir[k] = DirectoryEntry("bigshare", name, authoritative = true)
                     }
                 }
-                okSources++
+                if (live.isNotEmpty()) okSources++
             } catch (_: Exception) {
             }
             for ((k, v) in readIdMemory("bigshare_ids")) {
-                if (k !in dir) dir[k] = DirectoryEntry("bigshare", v.name, authoritative = true)
+                if (k !in dir) dir[k] = DirectoryEntry("bigshare", v.name)
             }
             // 3. ipomarket.in allotment tables (KFin/SME + dates).
             try {
                 delay(1000)
                 val html = RegistrarDirectory.fetchText(RegistrarDirectory.IPOMARKET_URL)
-                RegistrarDirectory.mergeInto(dir, RegistrarDirectory.parseIpomarket(html), canon)
-                okSources++
+                val entries = RegistrarDirectory.parseIpomarket(html)
+                RegistrarDirectory.mergeInto(dir, entries, canon)
+                if (entries.isNotEmpty()) okSources++
             } catch (_: Exception) {
             }
             // 4. IPOWatch allotment tables (independent second source).
             try {
                 delay(1000)
                 val html = RegistrarDirectory.fetchText(RegistrarDirectory.IPOWATCH_ALLOT_URL)
-                RegistrarDirectory.mergeInto(dir, RegistrarDirectory.parseIpowatch(html), canon)
-                okSources++
+                val entries = RegistrarDirectory.parseIpowatch(html)
+                RegistrarDirectory.mergeInto(dir, entries, canon)
+                if (entries.isNotEmpty()) okSources++
             } catch (_: Exception) {
             }
             recordAllotSource("allot_regdir", okSources > 0, 0)
             // Never cache an outage as a 24h blind spot (mirrors backend).
-            if (dir.isNotEmpty()) {
-                regDirCache = System.currentTimeMillis() to dir
+            // Preserve earlier mappings through partial outages; retry partial
+            // refreshes after 15 minutes rather than freezing gaps for a day.
+            for ((key, entry) in cached) dir.putIfAbsent(key, entry)
+            if (dir.isNotEmpty() && okSources > 0) {
+                val age = if (okSources == 4) 0L else regDirTtlMs - 15 * 60_000L
+                regDirCache = (System.currentTimeMillis() - age) to dir
                 _regDir.value = dir
             }
             dir
-        }
+        } }
 
     private fun enrichIpos(
         dir: Map<String, DirectoryEntry>,
@@ -447,9 +448,6 @@ class AxewatchRepository(
 
     init {
         loadInitialMarketData()
-        CoroutineScope(Dispatchers.IO).launch {
-            refreshMarket()
-        }
     }
 
     private fun loadInitialMarketData() {
@@ -529,7 +527,16 @@ class AxewatchRepository(
         }
         val gmpDeferred = async {
             try {
-                gmpService.fetchLiveGmpData()
+                val result = gmpService.fetchLiveGmpData()
+                val (liveIpos, liveGmps) = result
+                if (liveGmps.isNotEmpty()) _gmpItems.value = liveGmps
+                if (liveIpos.isNotEmpty()) {
+                    _ipos.value = liveIpos
+                    writeIpoSnapshot(liveIpos)
+                    _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
+                    writeIpoSnapshot(_ipos.value)
+                }
+                result
             } catch (_: Exception) {
                 Pair(emptyList<IpoIssue>(), emptyList<GmpItem>())
             }
@@ -575,8 +582,11 @@ class AxewatchRepository(
             Triple("WIPRO", "Wipro Ltd", "IT")
         )
 
-        val fetchedQuotes = tickersToFetch.map { (sym, name, sec) ->
+        val fetchedQuotes = tickersToFetch.mapIndexed { index, (sym, name, sec) ->
             async {
+                // Yahoo throttles bursts. Stagger starts while retaining
+                // concurrent requests so the dashboard still loads promptly.
+                delay(index * 400L)
                 try {
                     yahooService.fetchStockQuote(sym, name, sec)
                 } catch (e: Exception) {
@@ -611,8 +621,9 @@ class AxewatchRepository(
             Triple("^INDIAVIX", "INDIAVIX", "INDIA VIX")
         )
 
-        val fetchedIndices = indicesToFetch.map { (ticker, sym, name) ->
+        val fetchedIndices = indicesToFetch.mapIndexed { index, (ticker, sym, name) ->
             async {
+                delay(index * 400L)
                 try {
                     yahooService.fetchMarketIndex(ticker, sym, name)
                 } catch (e: Exception) {
@@ -643,21 +654,8 @@ class AxewatchRepository(
             SectorHeatmapItem("NIFTY FMCG", (fmcgStocks.map { it.percentChange }.average().takeIf { !it.isNaN() } ?: 0.0).let { (it * 100).roundToInt() / 100.0 }, fmcgStocks.maxByOrNull { it.percentChange }?.symbol ?: "—")
         )
 
-        // 3. Await real IPOs & Live GMP
-        try {
-            val (liveIpos, liveGmps) = gmpDeferred.await()
-            if (liveIpos.isNotEmpty()) {
-                // Directory-backed registrar + declared allotment dates.
-                _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
-                // Compact snapshot for the background declaration watcher:
-                // symbols/registrars/dates without re-scraping the trackers.
-                writeIpoSnapshot(_ipos.value)
-            }
-            if (liveGmps.isNotEmpty()) {
-                _gmpItems.value = liveGmps
-            }
-        } catch (_: Exception) {
-        }
+        // IPO data publishes independently as soon as it arrives.
+        gmpDeferred.await()
 
         // 4. Await past IPO listings
         try {
@@ -762,11 +760,12 @@ class AxewatchRepository(
         // Background-watcher overrides: the worker process has no live _ipos,
         // so it passes the snapshot's real name/registrar instead of the stub.
         knownName: String? = null,
-        knownRegistrar: String? = null
+        knownRegistrar: String? = null,
+        knownDeclared: Boolean = false
     ): AllotmentRecordEntity = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
         require(IpoAllotmentService.isValidPan(cleanPan)) { "Invalid PAN format" }
-        val ipo = _ipos.value.find { it.symbol == ipoSymbol } ?: _ipos.value.firstOrNull() ?: IpoIssue(
+        val ipo = _ipos.value.find { it.symbol == ipoSymbol } ?: IpoIssue(
             symbol = ipoSymbol,
             companyName = ipoSymbol,
             category = "Mainboard",
@@ -791,8 +790,9 @@ class AxewatchRepository(
         // tracker status — the registrars get queried either way.
         val remembered = readIdMemory("mufg_ids")
             .mapValues { (_, v) -> v.id to v.name }
-        val declared = ipo.allotmentDate.isNotBlank() ||
-            ipo.status.equals("Closed", ignoreCase = true) ||
+        val declared = knownDeclared || com.aistudio.axewatch.trader.data.model.isDeclaredOut(
+            com.aistudio.axewatch.trader.data.model.WatchedIssue(ipo.symbol, effName, effRegistrar, ipo.allotmentDate, ipo.status)
+        ) ||
             ipo.status.equals("Listed", ignoreCase = true) ||
             ipo.status.equals("Allotted", ignoreCase = true)
         val reg = if (effRegistrar.isNotBlank() && !effRegistrar.equals("Unknown", ignoreCase = true)) {
@@ -801,7 +801,11 @@ class AxewatchRepository(
             attributeRegistrar(effName, ipo.symbol).registrar
         }
         val queryResult = allotmentService.queryAllotment(
-            cleanPan, ipo.symbol, effName, ipo.status, remembered, declared, reg
+            cleanPan, ipo.symbol, effName, ipo.status, remembered,
+            declared || com.aistudio.axewatch.trader.data.model.isDeclaredOut(
+                com.aistudio.axewatch.trader.data.model.WatchedIssue(ipo.symbol, effName, reg, ipo.allotmentDate, ipo.status),
+                regDirCache.second
+            ), reg
         )
 
         val sharesAllotted = queryResult.sharesAllotted
@@ -811,7 +815,7 @@ class AxewatchRepository(
         // Attribute the record to the DIRECTORY registrar when we know it.
         // The probing source is a transport detail: a KFin IPO probed through
         // MUFG's rotating list used to get stored (and displayed) as "MUFG".
-        val knownDisplayRegistrar = effRegistrar.takeIf {
+        val knownDisplayRegistrar = reg.takeIf {
             it.isNotBlank() && !it.equals("Unknown", ignoreCase = true)
         }
         val registrar = when {
@@ -1061,7 +1065,8 @@ class AxewatchRepository(
         ipoSymbol: String,
         onlyPanNumbers: Set<String>? = null,
         knownName: String? = null,
-        knownRegistrar: String? = null
+        knownRegistrar: String? = null,
+        knownDeclared: Boolean = false
     ): List<AllotmentRecordEntity> = withContext(Dispatchers.IO) {
         val pans = panVaultDao.getAllPans().first()
             .filter { onlyPanNumbers == null || it.panNumber in onlyPanNumbers }
@@ -1071,7 +1076,7 @@ class AxewatchRepository(
             if (index > 0) delay(400)
             val record = checkIpoAllotment(
                 pan.panNumber, ipoSymbol, pan.holderName,
-                knownName = knownName, knownRegistrar = knownRegistrar
+                knownName = knownName, knownRegistrar = knownRegistrar, knownDeclared = knownDeclared
             )
             results.add(record)
         }
