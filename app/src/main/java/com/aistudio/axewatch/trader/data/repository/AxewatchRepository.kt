@@ -14,6 +14,7 @@ import com.aistudio.axewatch.trader.data.model.CandleBar
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
 import com.aistudio.axewatch.trader.data.model.GmpItem
 import com.aistudio.axewatch.trader.data.model.IpoIssue
+import com.aistudio.axewatch.trader.data.model.IndexConstituent
 import com.aistudio.axewatch.trader.data.model.MarketIndex
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
 import com.aistudio.axewatch.trader.data.model.PastIpoItem
@@ -35,6 +36,9 @@ import com.aistudio.axewatch.trader.data.remote.RegistrarDirectory
 import com.aistudio.axewatch.trader.data.remote.IpoGmpService
 import com.aistudio.axewatch.trader.data.remote.MutualFundService
 import com.aistudio.axewatch.trader.data.remote.NewsSentimentService
+import com.aistudio.axewatch.trader.data.remote.NewsAnalysisResult
+import com.aistudio.axewatch.trader.data.remote.NewsItem
+import com.aistudio.axewatch.trader.data.remote.IndexMembershipService
 import com.aistudio.axewatch.trader.data.remote.YahooFinanceService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -44,6 +48,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -52,6 +57,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 import kotlin.random.Random
+import java.util.concurrent.ConcurrentHashMap
 
 class AxewatchRepository(
     private val db: AppDatabase,
@@ -69,6 +75,7 @@ class AxewatchRepository(
     val gmpService = IpoGmpService()
     val mfService = MutualFundService()
     val newsService = NewsSentimentService()
+    private val indexMembershipService = IndexMembershipService()
 
     init {
         // Per-attempt allotment health: the service callback fires on every
@@ -77,8 +84,48 @@ class AxewatchRepository(
         allotmentService.onSourceResult = { id, ok, ms -> recordAllotSource(id, ok, ms) }
     }
 
-    private val candleCache = mutableMapOf<String, List<CandleBar>>()
-    private val outlookCache = mutableMapOf<String, TradeOutlook>()
+    private val candleCache = ConcurrentHashMap<Pair<String, String>, List<CandleBar>>()
+    private val outlookCache = ConcurrentHashMap<String, TradeOutlook>()
+    private val _marketNews = MutableStateFlow<List<NewsItem>>(emptyList())
+    val marketNews = _marketNews.asStateFlow()
+    private var marketNewsFetchedAt = 0L
+
+    suspend fun refreshMarketNews(force: Boolean = false) {
+        if (!force && System.currentTimeMillis() - marketNewsFetchedAt < 30 * 60_000L) return
+        val fetched = newsService.fetchMarketNews()
+        if (fetched.isNotEmpty()) _marketNews.value = fetched
+        marketNewsFetchedAt = System.currentTimeMillis()
+    }
+
+    /** Membership is fetched from the official CSV, cached daily on device. */
+    suspend fun getIndexConstituents(symbol: String): List<IndexConstituent> {
+        if (!IndexMembershipService.supported(symbol)) {
+            return rememberIndexStocks(if (symbol == "SENSEX")
+                IndexConstituentsProvider.sensexConstituents.map { it.copy(weightPercent = 0.0) }
+                else emptyList())
+        }
+        val cacheKey = "index_membership_$symbol"
+        val raw = prefs?.getString(cacheKey, null)
+        val cacheTime = prefs?.getLong("${cacheKey}_at", 0L) ?: 0L
+        if (raw != null && System.currentTimeMillis() - cacheTime < 24 * 3600_000L) {
+            val parsed = IndexMembershipService.parseConstituents(raw)
+            if (parsed.isNotEmpty()) return rememberIndexStocks(parsed)
+        }
+        val fetched = indexMembershipService.fetchCsv(symbol)
+        if (fetched != null) {
+            prefs?.edit()?.putString(cacheKey, fetched)?.putLong("${cacheKey}_at", System.currentTimeMillis())?.apply()
+            return rememberIndexStocks(IndexMembershipService.parseConstituents(fetched))
+        }
+        return rememberIndexStocks(raw?.let(IndexMembershipService::parseConstituents) ?: emptyList())
+    }
+
+    private fun rememberIndexStocks(rows: List<IndexConstituent>): List<IndexConstituent> {
+        _stocks.update { current ->
+            val existing = current.mapTo(mutableSetOf()) { it.symbol }
+            current + rows.filter { existing.add(it.symbol) }.map { it.toStockQuote() }
+        }
+        return rows
+    }
 
     // ---- Registrar ID memory + attribution (mirrors the web backend) ----
     // MUFG rotates its dropdown to recent issues, but SearchOnPan keeps
@@ -391,7 +438,7 @@ class AxewatchRepository(
             } catch (_: Exception) {
             }
             val equity = cash + posValue
-            val niftyChg = _indices.value.find { it.symbol == "NIFTY 50" }?.percentChange ?: 0.0
+            val niftyChg = _indices.value.find { it.symbol == "NIFTY 50" && it.lastPrice > 0 }?.percentChange
             val out = mutableListOf<TradeIdea>()
             _tradeScanProgress.value = 0 to universe.size
             for ((i, c) in universe.withIndex()) {
@@ -566,7 +613,7 @@ class AxewatchRepository(
         }
 
         // 1. Fetch real stock quotes from Yahoo Finance concurrently
-        val currentStocks = _stocks.value.toMutableList()
+        var currentStocks = _stocks.value.toMutableList()
         var yahooSuccessCount = 0
 
         val tickersToFetch = listOf(
@@ -609,7 +656,12 @@ class AxewatchRepository(
             }
         }
         if (currentStocks.isNotEmpty()) {
-            _stocks.value = currentStocks
+            val replacements = fetchedQuotes.filterNotNull().associateBy { it.symbol }
+            _stocks.update { latest ->
+                (latest.map { replacements[it.symbol] ?: it } +
+                    replacements.values.filter { quote -> latest.none { it.symbol == quote.symbol } })
+            }
+            currentStocks = _stocks.value.toMutableList()
         }
 
         // 2. Fetch real indices from Yahoo Finance concurrently
@@ -710,7 +762,7 @@ class AxewatchRepository(
     // placeholder). Random-walk filler was removed — a chart must never show
     // invented price history as if it were market data.
     fun getCandlesForStock(symbol: String, timeframe: String = "1M"): List<CandleBar> {
-        val cached = candleCache[symbol]
+        val cached = candleCache[symbol to timeframe]
         if (cached != null && cached.isNotEmpty()) {
             return cached
         }
@@ -722,12 +774,13 @@ class AxewatchRepository(
             "1D" -> "1d"
             "1W" -> "5d"
             "3M" -> "3mo"
+            "6M" -> "6mo"
             "1Y" -> "1y"
             else -> "1mo"
         }
         val realCandles = yahooService.fetchCandles(symbol, range)
         if (realCandles.isNotEmpty()) {
-            candleCache[symbol] = realCandles
+            candleCache[symbol to timeframe] = realCandles
             return@withContext realCandles
         }
         emptyList()
@@ -740,19 +793,26 @@ class AxewatchRepository(
         return outlookCache[symbol]
     }
 
-    suspend fun fetchFreshOutlook(symbol: String, candles: List<CandleBar>): TradeOutlook = withContext(Dispatchers.IO) {
-        val newsResult = newsService.fetchStockNews(symbol)
-        val niftyChange = _indices.value.find { it.symbol == "NIFTY 50" }?.percentChange ?: 0.5
+    suspend fun fetchFreshOutlook(symbol: String, candles: List<CandleBar>): TradeOutlook = withContext(Dispatchers.Default) {
+        val niftyChange = _indices.value.find { it.symbol == "NIFTY 50" && it.lastPrice > 0 }?.percentChange
         val outlook = TechnicalAnalysisEngine.computeOutlook(
             symbol = symbol,
             candles = candles,
-            newsHeadline = newsResult.headline,
-            newsSentiment = newsResult.sentimentLabel,
             marketNiftyChange = niftyChange
         )
         outlookCache[symbol] = outlook
         outlook
     }
+
+    suspend fun fetchStockNews(symbol: String): NewsAnalysisResult = newsService.fetchStockNews(symbol)
+
+    suspend fun fetchStockQuote(stock: StockQuote): StockQuote? =
+        yahooService.fetchStockQuote(stock.symbol, stock.name, stock.sector)?.also { quote ->
+            _stocks.update { current ->
+                if (current.any { it.symbol == quote.symbol }) current.map { if (it.symbol == quote.symbol) quote else it }
+                else current + quote
+            }
+        }
 
     // Real IPO Allotment Checker (Link Intime AES token & KFintech API)
     suspend fun checkIpoAllotment(

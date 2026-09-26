@@ -16,6 +16,7 @@ import com.aistudio.axewatch.trader.data.model.CandleBar
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
 import com.aistudio.axewatch.trader.data.model.GmpItem
 import com.aistudio.axewatch.trader.data.model.IpoIssue
+import com.aistudio.axewatch.trader.data.model.IndexConstituent
 import com.aistudio.axewatch.trader.data.model.MarketIndex
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
 import com.aistudio.axewatch.trader.data.model.PastIpoItem
@@ -29,6 +30,7 @@ import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeIdea
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
 import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
+import com.aistudio.axewatch.trader.data.remote.NewsItem
 import com.aistudio.axewatch.trader.data.repository.AxewatchRepository
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,6 +42,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.supervisorScope
 
 class AxewatchViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -52,6 +56,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             repository.ensurePaperAccountCreated()
         }
+        viewModelScope.launch { repository.refreshMarketNews() }
     }
 
     // Navigation Tab (0: Market, 1: IPO & GMP, 2: Paper Trading, 3: Portfolio, 4: Allotment)
@@ -70,6 +75,31 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     val stocks: StateFlow<List<StockQuote>> = repository.stocks.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
+
+    val marketNews: StateFlow<List<NewsItem>> = repository.marketNews.stateIn(
+        viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
+    )
+    private val _indexConstituents = MutableStateFlow<Map<String, List<IndexConstituent>>>(emptyMap())
+    val indexConstituents: StateFlow<Map<String, List<IndexConstituent>>> = _indexConstituents.asStateFlow()
+    private val _indexLoading = MutableStateFlow<Set<String>>(emptySet())
+    val indexLoading: StateFlow<Set<String>> = _indexLoading.asStateFlow()
+
+    fun loadIndexConstituents(symbol: String) {
+        if (symbol in _indexConstituents.value || symbol in _indexLoading.value) return
+        _indexLoading.value = _indexLoading.value + symbol
+        viewModelScope.launch {
+            try {
+                val list = repository.getIndexConstituents(symbol)
+                if (list.isNotEmpty()) _indexConstituents.value = _indexConstituents.value + (symbol to list)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // An unavailable index source leaves an honest empty state.
+            } finally {
+                _indexLoading.value = _indexLoading.value - symbol
+            }
+        }
+    }
 
     val ipos: StateFlow<List<IpoIssue>> = repository.ipos.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -214,17 +244,66 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
 
     private val _selectedStockOutlook = MutableStateFlow<TradeOutlook?>(null)
     val selectedStockOutlook: StateFlow<TradeOutlook?> = _selectedStockOutlook.asStateFlow()
+    private val _stockNews = MutableStateFlow<List<NewsItem>>(emptyList())
+    val stockNews: StateFlow<List<NewsItem>> = _stockNews.asStateFlow()
+    private val _stockNewsLoading = MutableStateFlow(false)
+    val stockNewsLoading: StateFlow<Boolean> = _stockNewsLoading.asStateFlow()
+    private val _outlookLoading = MutableStateFlow(false)
+    val outlookLoading: StateFlow<Boolean> = _outlookLoading.asStateFlow()
+    private var stockLoadJob: Job? = null
+    private var chartLoadJob: Job? = null
+    private var stockSelectionId = 0L
 
     fun selectStock(stock: StockQuote) {
+        val selectionId = ++stockSelectionId
+        stockLoadJob?.cancel()
+        chartLoadJob?.cancel()
         _selectedStock.value = stock
         _selectedStockCandles.value = repository.getCandlesForStock(stock.symbol, _selectedTimeframe.value)
         _selectedStockOutlook.value = repository.getStockOutlook(stock.symbol)
-        viewModelScope.launch {
-            val freshCandles = repository.fetchFreshCandles(stock.symbol, _selectedTimeframe.value)
-            if (_selectedStock.value?.symbol == stock.symbol) {
-                _selectedStockCandles.value = freshCandles
-                val freshOutlook = repository.fetchFreshOutlook(stock.symbol, freshCandles)
-                _selectedStockOutlook.value = freshOutlook
+        _stockNews.value = emptyList()
+        _stockNewsLoading.value = true
+        _outlookLoading.value = true
+        loadChart(stock.symbol, _selectedTimeframe.value)
+        stockLoadJob = viewModelScope.launch { supervisorScope {
+            if (stock.lastPrice <= 0) launch {
+                try {
+                    repository.fetchStockQuote(stock)?.let { quote ->
+                        if (selectionId == stockSelectionId) _selectedStock.value = quote
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) { }
+            }
+            launch {
+                try {
+                    val bars = repository.fetchFreshCandles(stock.symbol, "6M")
+                    val fresh = repository.fetchFreshOutlook(stock.symbol, bars)
+                    if (selectionId == stockSelectionId) _selectedStockOutlook.value = fresh
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) {
+                    // Keep the last cached outlook and show its unavailable state.
+                } finally { if (selectionId == stockSelectionId) _outlookLoading.value = false }
+            }
+            launch {
+                try {
+                    val news = repository.fetchStockNews(stock.symbol)
+                    if (selectionId == stockSelectionId) _stockNews.value = news.items
+                } catch (e: kotlinx.coroutines.CancellationException) { throw e
+                } catch (_: Exception) { }
+                finally {
+                    if (selectionId == stockSelectionId) _stockNewsLoading.value = false
+                }
+            }
+        } }
+    }
+
+    private fun loadChart(symbol: String, timeframe: String) {
+        chartLoadJob?.cancel()
+        val selectionId = stockSelectionId
+        chartLoadJob = viewModelScope.launch {
+            val bars = repository.fetchFreshCandles(symbol, timeframe)
+            if (selectionId == stockSelectionId && _selectedTimeframe.value == timeframe) {
+                _selectedStockCandles.value = bars
             }
         }
     }
@@ -233,19 +312,20 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         _selectedTimeframe.value = tf
         _selectedStock.value?.let { stock ->
             _selectedStockCandles.value = repository.getCandlesForStock(stock.symbol, tf)
-            viewModelScope.launch {
-                val freshCandles = repository.fetchFreshCandles(stock.symbol, tf)
-                if (_selectedStock.value?.symbol == stock.symbol) {
-                    _selectedStockCandles.value = freshCandles
-                }
-            }
+            loadChart(stock.symbol, tf)
         }
     }
 
     fun dismissStockModal() {
+        stockSelectionId++
+        stockLoadJob?.cancel()
+        chartLoadJob?.cancel()
         _selectedStock.value = null
         _selectedStockCandles.value = emptyList()
         _selectedStockOutlook.value = null
+        _stockNews.value = emptyList()
+        _stockNewsLoading.value = false
+        _outlookLoading.value = false
     }
 
     // Refresh State
@@ -259,6 +339,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
             try {
                 val previousIpos = repository.readIpoSnapshot()
                 repository.refreshMarket()
+                viewModelScope.launch { repository.refreshMarketNews(force = true) }
                 if (_allotAlertsEnabled.value) {
                     com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.runNow(
                         getApplication(), previousIpos != repository.readIpoSnapshot()
@@ -266,11 +347,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                 }
                 _selectedStock.value?.let { st ->
                     val updated = stocks.value.find { it.symbol == st.symbol } ?: st
-                    _selectedStock.value = updated
-                    val freshCandles = repository.fetchFreshCandles(updated.symbol, _selectedTimeframe.value)
-                    _selectedStockCandles.value = freshCandles
-                    val freshOutlook = repository.fetchFreshOutlook(updated.symbol, freshCandles)
-                    _selectedStockOutlook.value = freshOutlook
+                    selectStock(updated)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e

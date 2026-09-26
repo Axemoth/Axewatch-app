@@ -15,9 +15,11 @@ object TechnicalAnalysisEngine {
         candles: List<CandleBar>,
         newsHeadline: String = "",
         newsSentiment: String = "Neutral",
-        marketNiftyChange: Double = 0.5
+        marketNiftyChange: Double? = null
     ): TradeOutlook {
-        if (candles.size < 15) {
+        // SMA50 and the risk plan need a full measured history. A 1-month chart
+        // must not silently stand in for 50 trading days of model input.
+        if (candles.size < 50 || candles.any { it.close <= 0 || it.low <= 0 || it.high < it.low }) {
             return fallbackOutlook(symbol)
         }
 
@@ -27,8 +29,8 @@ object TechnicalAnalysisEngine {
         val currentPrice = closes.last()
 
         // 1. SMA & EMA
-        val sma20 = sma(closes, 20) ?: currentPrice
-        val sma50 = sma(closes, 50) ?: sma20
+        val sma20 = sma(closes, 20) ?: return fallbackOutlook(symbol)
+        val sma50 = sma(closes, 50) ?: return fallbackOutlook(symbol)
         val rsi14 = rsi(closes, 14) ?: 52.0
         val atr14 = atr(highs, lows, closes, 14) ?: (currentPrice * 0.02)
         val (macdLine, macdSignal, macdHist) = macd(closes)
@@ -62,7 +64,11 @@ object TechnicalAnalysisEngine {
         if (currentPrice >= high10 * 0.98) srScore += 20.0
         if (currentPrice <= low10 * 1.02) srScore -= 20.0
 
-        val marketScore = if (marketNiftyChange >= 0) 15.0 else -15.0
+        val marketScore = when {
+            marketNiftyChange == null -> 0.0
+            marketNiftyChange >= 0 -> 15.0
+            else -> -15.0
+        }
 
         val compositeScore = (trendScore * 0.30 + momentumScore * 0.30 + volatilityScore * 0.15 + srScore * 0.15 + marketScore * 0.10)
             .coerceIn(-100.0, 100.0)
@@ -231,7 +237,7 @@ object TechnicalAnalysisEngine {
                 }
             }
         }
-        return if (hitDays.isNotEmpty()) hitDays.sorted()[hitDays.size / 2] else 8
+        return if (hitDays.isNotEmpty()) hitDays.sorted()[hitDays.size / 2] else 0
     }
 
     private fun fallbackOutlook(symbol: String): TradeOutlook {

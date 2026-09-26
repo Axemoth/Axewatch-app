@@ -44,16 +44,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
+import com.aistudio.axewatch.trader.data.model.IndexConstituent
 import com.aistudio.axewatch.trader.data.model.MarketIndex
 import com.aistudio.axewatch.trader.data.model.SectorHeatmapItem
 import com.aistudio.axewatch.trader.data.model.StockQuote
-import com.aistudio.axewatch.trader.data.provider.IndexConstituentsProvider
+import com.aistudio.axewatch.trader.data.remote.NewsItem
 import com.aistudio.axewatch.trader.ui.dialogs.IndexDetailModal
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
@@ -69,6 +71,11 @@ import com.aistudio.axewatch.trader.ui.theme.AxeTextMuted
 import com.aistudio.axewatch.trader.ui.theme.AxeTextPrimary
 import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
 import kotlinx.coroutines.delay
+import android.content.Intent
+import android.net.Uri
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun MarketScreen(
@@ -79,11 +86,17 @@ fun MarketScreen(
     watchlistedSymbols: Set<String> = emptySet(),
     onToggleWatchlist: (StockQuote) -> Unit = {},
     onStockClick: (StockQuote) -> Unit,
+    marketNews: List<NewsItem> = emptyList(),
+    indexConstituents: Map<String, List<IndexConstituent>> = emptyMap(),
+    indexLoading: Set<String> = emptySet(),
+    onLoadIndex: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var stockFilterTab by remember { mutableIntStateOf(0) } // 0: All, 1: Gainers, 2: Losers, 3: Watchlist
     var searchQuery by remember { mutableStateOf("") }
     var selectedIndexForModal by remember { mutableStateOf<MarketIndex?>(null) }
+    var showAllNews by remember { mutableStateOf(false) }
 
     val filteredStocks = remember(stocks, stockFilterTab, searchQuery, watchlistedSymbols) {
         val byTab = when (stockFilterTab) {
@@ -264,6 +277,43 @@ fun MarketScreen(
                             index = index,
                             onClick = { selectedIndexForModal = index }
                         )
+                    }
+                }
+            }
+        }
+
+        item {
+            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Text("POLICY & MARKET NEWS", color = AxeTextSecondary, fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Spacer(Modifier.height(6.dp))
+                if (marketNews.isEmpty()) {
+                    Text("Recent policy headlines are unavailable. Pull to refresh.",
+                        color = AxeTextMuted, fontSize = 12.sp)
+                } else {
+                    marketNews.take(if (showAllNews) 10 else 2).forEach { news ->
+                        Column(
+                            modifier = Modifier.fillMaxWidth()
+                                .padding(bottom = 6.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(AxeDarkSurface)
+                                .clickable(enabled = news.link.startsWith("https://")) {
+                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(news.link)))
+                                }
+                                .padding(horizontal = 12.dp, vertical = 9.dp)
+                        ) {
+                            Text(news.title, color = AxeTextPrimary, fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis)
+                            Text("${news.source} · ${SimpleDateFormat("dd MMM, HH:mm", Locale.ENGLISH).format(Date(news.publishedAtMillis))}",
+                                color = AxeTextMuted, fontSize = 10.sp)
+                        }
+                    }
+                    if (marketNews.size > 2) {
+                        Text(if (showAllNews) "Show fewer headlines" else "See all ${marketNews.size} headlines",
+                            color = AxePrimaryCyan, fontSize = 11.sp,
+                            modifier = Modifier.clickable { showAllNews = !showAllNews }
+                                .padding(top = 2.dp, bottom = 4.dp))
                     }
                 }
             }
@@ -556,12 +606,11 @@ fun MarketScreen(
 
     // Index Detail Modal showing all constituent stocks when an index is clicked
     selectedIndexForModal?.let { idx ->
-        val constituents = remember(idx.symbol) {
-            IndexConstituentsProvider.getConstituentsForIndex(idx.symbol)
-        }
-IndexDetailModal(
+        LaunchedEffect(idx.symbol) { onLoadIndex(idx.symbol) }
+        IndexDetailModal(
             index = idx,
-            constituents = constituents,
+            constituents = indexConstituents[idx.symbol].orEmpty(),
+            isLoading = idx.symbol in indexLoading,
             // Prices come only from live quotes; the static provider has none.
             liveQuotes = stocks.associateBy { it.symbol },
             onStockClick = { stockQuote ->
@@ -603,7 +652,10 @@ private fun IndexCard(
                     text = index.name,
                     color = AxeTextPrimary,
                     fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
                 Box(
                     modifier = Modifier
@@ -612,7 +664,8 @@ private fun IndexCard(
                         .padding(horizontal = 4.dp, vertical = 2.dp)
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Stocks", color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text(if (index.symbol == "INDIAVIX") "Details" else "Stocks",
+                            color = AxePrimaryCyan, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                         Spacer(modifier = Modifier.width(2.dp))
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.ArrowForward,
@@ -628,7 +681,7 @@ private fun IndexCard(
 
             Text(
                 // Index levels are points, not rupees — no currency symbol.
-                text = "%,.2f".format(index.lastPrice),
+                text = if (index.lastPrice > 0) "%,.2f".format(index.lastPrice) else "—",
                 color = AxeTextPrimary,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.ExtraBold
@@ -636,7 +689,7 @@ private fun IndexCard(
 
             Spacer(modifier = Modifier.height(2.dp))
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            if (index.lastPrice > 0) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = if (isBull) "▲ +${index.percentChange}%" else "▼ ${kotlin.math.abs(index.percentChange)}%",
                     color = accentColor,
@@ -684,13 +737,13 @@ private fun StockListItem(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 5.dp)
+            .padding(horizontal = 16.dp, vertical = 3.dp)
             .clip(RoundedCornerShape(10.dp))
             .background(AxeDarkSurface)
             .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .testTag("stock_item_${stock.symbol}")
-            .padding(14.dp)
+            .padding(12.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -699,37 +752,20 @@ private fun StockListItem(
         ) {
             // Left: Symbol, Name, Sector
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = stock.symbol,
-                        color = AxeTextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(AxeDarkSurfaceElevated)
-                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = stock.sector,
-                            color = AxeTextMuted,
-                            fontSize = 9.sp
-                        )
-                    }
-                }
+                Text(stock.symbol, color = AxeTextPrimary, fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold, maxLines = 1,
+                    overflow = TextOverflow.Ellipsis)
                 Text(
-                    text = stock.name,
+                    text = "${stock.name} · ${stock.sector}",
                     color = AxeTextSecondary,
                     fontSize = 11.sp,
-                    maxLines = 1
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = if (stock.lastPrice > 0)
                         "Vol: ${stock.volume} · H: ₹${"%,.0f".format(stock.dayHigh)} L: ₹${"%,.0f".format(stock.dayLow)}"
-                    else "No live quote yet",
+                    else "Tap to load a live quote",
                     color = AxeTextMuted,
                     fontSize = 10.sp
                 )

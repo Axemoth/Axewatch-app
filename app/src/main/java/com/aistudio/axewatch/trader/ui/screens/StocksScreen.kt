@@ -34,11 +34,13 @@ import com.aistudio.axewatch.trader.data.local.entity.PaperAccountEntity
 import com.aistudio.axewatch.trader.data.local.entity.PaperOrderEntity
 import com.aistudio.axewatch.trader.data.local.entity.PaperPositionEntity
 import com.aistudio.axewatch.trader.data.model.FiiDiiFlow
+import com.aistudio.axewatch.trader.data.model.IndexConstituent
 import com.aistudio.axewatch.trader.data.model.MarketIndex
 import com.aistudio.axewatch.trader.data.model.QuantModelReportCard
 import com.aistudio.axewatch.trader.data.model.SectorHeatmapItem
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeIdea
+import com.aistudio.axewatch.trader.data.remote.NewsItem
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkSurfaceElevated
 import com.aistudio.axewatch.trader.ui.theme.AxePrimaryCyan
@@ -54,6 +56,10 @@ fun StocksScreen(
     watchlistedSymbols: Set<String> = emptySet(),
     onToggleWatchlist: (StockQuote) -> Unit = {},
     onStockClick: (StockQuote) -> Unit,
+    marketNews: List<NewsItem> = emptyList(),
+    indexConstituents: Map<String, List<IndexConstituent>> = emptyMap(),
+    indexLoading: Set<String> = emptySet(),
+    onLoadIndex: (String) -> Unit = {},
     // Paper Trading Data
     account: PaperAccountEntity?,
     positions: List<PaperPositionEntity>,
@@ -133,7 +139,11 @@ fun StocksScreen(
                     fiiDii = fiiDii,
                     watchlistedSymbols = watchlistedSymbols,
                     onToggleWatchlist = onToggleWatchlist,
-                    onStockClick = onStockClick
+                    onStockClick = onStockClick,
+                    marketNews = marketNews,
+                    indexConstituents = indexConstituents,
+                    indexLoading = indexLoading,
+                    onLoadIndex = onLoadIndex
                 )
                 1 -> PaperTradingScreen(
                     account = account,

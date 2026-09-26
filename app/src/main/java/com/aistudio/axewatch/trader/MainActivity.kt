@@ -174,6 +174,12 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val selectedStock by viewModel.selectedStock.collectAsState()
     val stockCandles by viewModel.selectedStockCandles.collectAsState()
     val stockOutlook by viewModel.selectedStockOutlook.collectAsState()
+    val outlookLoading by viewModel.outlookLoading.collectAsState()
+    val stockNews by viewModel.stockNews.collectAsState()
+    val stockNewsLoading by viewModel.stockNewsLoading.collectAsState()
+    val marketNews by viewModel.marketNews.collectAsState()
+    val indexConstituents by viewModel.indexConstituents.collectAsState()
+    val indexLoading by viewModel.indexLoading.collectAsState()
 
     var showAddHoldingDialog by remember { mutableStateOf(false) }
     // Pending paper-order target: quote, optional outlook, and the risk-sized
@@ -286,7 +292,8 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     },
                     alertsEnabled = allotAlertsEnabled,
                     onToggleAlerts = { viewModel.setAllotAlertsEnabled(it) },
-                    allotmentSectionTick = allotmentSectionTick
+                    allotmentSectionTick = allotmentSectionTick,
+                    isLoading = isRefreshing
                 )
                 1 -> StocksScreen(
                     indices = indices,
@@ -303,6 +310,10 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                         )
                     },
                     onStockClick = { stock -> viewModel.selectStock(stock) },
+                    marketNews = marketNews,
+                    indexConstituents = indexConstituents,
+                    indexLoading = indexLoading,
+                    onLoadIndex = viewModel::loadIndexConstituents,
                     account = account,
                     positions = positions,
                     orders = orders,
@@ -384,6 +395,9 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
             stock = stock,
             candles = stockCandles,
             outlook = stockOutlook,
+            outlookLoading = outlookLoading,
+            newsItems = stockNews,
+            newsLoading = stockNewsLoading,
             selectedTimeframe = selectedTimeframe,
             onTimeframeSelected = { tf -> viewModel.setTimeframe(tf) },
             isWatchlisted = watchlistedSymbols.contains(stock.symbol),

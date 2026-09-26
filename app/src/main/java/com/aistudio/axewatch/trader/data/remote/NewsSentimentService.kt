@@ -2,6 +2,8 @@ package com.aistudio.axewatch.trader.data.remote
 
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -9,6 +11,8 @@ import org.xmlpull.v1.XmlPullParser
 import org.xmlpull.v1.XmlPullParserFactory
 import java.io.StringReader
 import java.net.URLEncoder
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
@@ -18,7 +22,8 @@ data class NewsItem(
     val published: String,
     val source: String,
     val isNegative: Boolean = false,
-    val isPositive: Boolean = false
+    val isPositive: Boolean = false,
+    val publishedAtMillis: Long = 0L
 )
 
 data class NewsAnalysisResult(
@@ -34,6 +39,9 @@ class NewsSentimentService {
     companion object {
         private const val TAG = "NewsSentimentService"
         private const val BASE_RSS = "https://news.google.com/rss/search"
+        private const val RBI_PRESS = "https://rbi.org.in/pressreleases_rss.xml"
+        private const val RBI_NOTIFICATIONS = "https://rbi.org.in/notifications_rss.xml"
+        private const val SEBI_RSS = "https://www.sebi.gov.in/sebirss.xml"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
 
         private val NEG_PATTERN = Pattern.compile(
@@ -43,6 +51,10 @@ class NewsSentimentService {
 
         private val POS_PATTERN = Pattern.compile(
             "surge|soar|jump|rally|record high|record profit|beats|rises|strong results|upgrade|order win|contract|expansion|acquisition|dividend|bonus|buyback",
+            Pattern.CASE_INSENSITIVE
+        )
+        private val MARKET_PATTERN = Pattern.compile(
+            "monetary policy|policy rate|repo rate|inflation|liquidity|securities|stock market|equity|derivative|margin|foreign exchange|rupee|tariff|trade policy|tax|budget|banking|investment|fpi|fii|sebi board|regulation|market crash|market rally",
             Pattern.CASE_INSENSITIVE
         )
     }
@@ -55,21 +67,11 @@ class NewsSentimentService {
     suspend fun fetchStockNews(symbol: String, limit: Int = 8): NewsAnalysisResult = withContext(Dispatchers.IO) {
         val sym = symbol.trim().uppercase()
         try {
-            val query = URLEncoder.encode("$sym NSE stock", "UTF-8")
+            val query = URLEncoder.encode("$sym NSE stock when:7d", "UTF-8")
             val url = "$BASE_RSS?q=$query&hl=en-IN&gl=IN&ceid=IN:en"
-            val request = Request.Builder()
-                .url(url)
-                .header("User-Agent", USER_AGENT)
-                .header("Accept", "*/*")
-                .build()
+            val items = fetchFeed(url, limit).filter(::isRecent)
 
-            val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext fallbackAnalysis(sym)
-
-            val xml = response.body?.string() ?: return@withContext fallbackAnalysis(sym)
-            val items = parseRssItems(xml, limit)
-
-            if (items.isEmpty()) return@withContext fallbackAnalysis(sym)
+            if (items.isEmpty()) return@withContext fallbackAnalysis()
 
             var posCount = 0
             var negCount = 0
@@ -96,7 +98,7 @@ class NewsSentimentService {
                 else -> "Neutral"
             }
 
-            val bestHeadline = items.firstOrNull()?.title ?: "NSE updates: Healthy order execution & volume expansion"
+            val bestHeadline = items.first().title
 
             NewsAnalysisResult(
                 headline = bestHeadline,
@@ -107,11 +109,51 @@ class NewsSentimentService {
             )
         } catch (e: Exception) {
             Log.w(TAG, "Failed to fetch news for $sym: ${e.message}")
-            fallbackAnalysis(sym)
+            fallbackAnalysis()
         }
     }
 
-    private fun parseRssItems(xml: String, limit: Int): List<NewsItem> {
+    /** Recent policy and market headlines, with direct source links and dates.
+     *  The keyword filter is editorial relevance, never a claim of market impact.
+     */
+    suspend fun fetchMarketNews(limit: Int = 10): List<NewsItem> = coroutineScope {
+        val feeds = listOf(
+            RBI_PRESS to "RBI", RBI_NOTIFICATIONS to "RBI", SEBI_RSS to "SEBI",
+            "$BASE_RSS?q=${URLEncoder.encode("India stocks RBI SEBI budget tariff policy when:7d", "UTF-8")}&hl=en-IN&gl=IN&ceid=IN:en" to ""
+        )
+        feeds.map { (url, source) -> async(Dispatchers.IO) { fetchFeed(url, 30, source) } }
+            .flatMap { it.await() }
+            .filter { isRecent(it) && MARKET_PATTERN.matcher(it.title).find() }
+            .distinctBy { it.title.lowercase().replace(Regex("[^a-z0-9]+"), "") }
+            .sortedWith(compareByDescending<NewsItem> { marketRelevance(it.title) }
+                .thenByDescending { it.publishedAtMillis })
+            .take(limit)
+    }
+
+    private fun marketRelevance(title: String): Int {
+        val t = title.lowercase()
+        return when {
+            listOf("monetary policy", "repo rate", "sebi board", "budget", "tariff").any(t::contains) -> 3
+            listOf("regulation", "derivative", "inflation", "tax", "foreign exchange").any(t::contains) -> 2
+            else -> 1
+        }
+    }
+
+    private fun isRecent(item: NewsItem): Boolean = item.publishedAtMillis > 0 &&
+        System.currentTimeMillis() - item.publishedAtMillis in 0L..7L * 24 * 60 * 60 * 1000
+
+    private fun fetchFeed(url: String, limit: Int, source: String = ""): List<NewsItem> = try {
+        val request = Request.Builder().url(url).header("User-Agent", USER_AGENT).build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) emptyList()
+            else response.body?.string()?.let { parseRssItems(it, limit, source) } ?: emptyList()
+        }
+    } catch (e: Exception) {
+        Log.w(TAG, "News feed unavailable: ${e.javaClass.simpleName}")
+        emptyList()
+    }
+
+    internal fun parseRssItems(xml: String, limit: Int, sourceOverride: String = ""): List<NewsItem> {
         val list = mutableListOf<NewsItem>()
         try {
             val factory = XmlPullParserFactory.newInstance()
@@ -156,7 +198,9 @@ class NewsSentimentService {
                                 val cleanTitle = if (source.isNotBlank() && title.endsWith(" - $source")) {
                                     title.removeSuffix(" - $source").trim()
                                 } else title
-                                list.add(NewsItem(cleanTitle, link, pubDate, source.ifBlank { "Media" }))
+                                list.add(NewsItem(cleanTitle, link, pubDate,
+                                    sourceOverride.ifBlank { source.ifBlank { "Media" } },
+                                    publishedAtMillis = parseNewsDate(pubDate)))
                             }
                         }
                         currentTag = ""
@@ -170,11 +214,21 @@ class NewsSentimentService {
         return list
     }
 
-    private fun fallbackAnalysis(symbol: String): NewsAnalysisResult {
+    internal fun parseNewsDate(value: String): Long {
+        for (pattern in listOf("EEE, dd MMM yyyy HH:mm:ss z", "EEE, dd MMM yyyy HH:mm:ss",
+            "dd MMM, yyyy Z", "dd MMM yyyy HH:mm:ss z")) {
+            try {
+                return SimpleDateFormat(pattern, Locale.ENGLISH).apply { isLenient = false }.parse(value.trim())?.time ?: 0L
+            } catch (_: Exception) { }
+        }
+        return 0L
+    }
+
+    private fun fallbackAnalysis(): NewsAnalysisResult {
         return NewsAnalysisResult(
-            headline = "Market pulse: Institutional flows and sectoral support driving $symbol",
-            sentimentScore = 15.0,
-            sentimentLabel = "Constructive",
+            headline = "",
+            sentimentScore = 0.0,
+            sentimentLabel = "Neutral",
             items = emptyList(),
             redFlags = emptyList()
         )

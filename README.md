@@ -44,7 +44,7 @@ Axewatch App
 #### A. Current IPOs and GMP
 - **Active & Forthcoming Issues**: Real-time Mainboard and SME IPO issues fetched from live aggregators.
 - **One current board**: Open and Forthcoming are separate sections in the same view. Cards show measured GMP and subscription side by side, with a Mainboard/SME tag; each section is sorted by GMP. Missing data shows `—`.
-- **Compact cards**: Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own subtab.
+- **Compact cards**: Long company names get their own full-width lines; category and status stay readable on narrow phones. Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own subtab. A loading state distinguishes slow live feeds from an empty board.
 - **Past listings**: Issue, listing, and current prices come from their distinct source columns. Missing prices display `—` rather than a copied issue price.
 - **Live Subscription Tracking**: SEBI subscription splits parsed in real-time across:
   - **QIB** (Qualified Institutional Buyers)
@@ -74,6 +74,7 @@ Axewatch App
 - **Strict PII Protection**: Full PAN numbers are stored strictly on-device in Room database, masked everywhere (`AB*****F`), and never logged or exposed.
 - **Manual Allotment Journal**: Hand-log outcomes checked on official portals; Bigshare requires CAPTCHA.
 - **Focused allotment list**: Open issues and issues closed within 30 days only. Saved older result history remains visible. Saved-vault PANs are checked when results are due, with distinct allotted, not allotted, and no-application alerts where the registrar supports an automated check.
+- **Check first**: The issue selector, saved holder chips, PAN field, and check actions lead the Allotment screen; source diagnostics and result history follow them.
 
 ---
 
@@ -81,11 +82,12 @@ Axewatch App
 
 #### A. Market Dashboard
 - **Live Indices**: NIFTY 50, BSE SENSEX, BANKNIFTY, NIFTY IT, NIFTY AUTO, NIFTY METAL, INDIA VIX.
-- **Constituent Quotes**: Real-time prices, percentage changes, and day ranges for top NIFTY 50 equities.
+- **Complete index lists**: Tapping a NIFTY index loads its full published NSE Indices constituent CSV (cached on-device for a day). The stock list gains those symbols too. A row without a quote still opens and requests one on demand; unavailable prices and weights show `—`. SENSEX has a labeled reference list; India VIX has no stock constituents.
+- **Policy & market news**: A compact news panel shows recent, dated headlines from RBI and SEBI RSS feeds plus relevant market coverage. Headlines link to their source. Feed failures show an empty state, never an invented market headline.
 - **Custom Candlestick Charts**: Native Compose canvas renderer with multi-timeframe OHLCV bars (1D, 1W, 1M, 3M, 1Y).
 - **Sector Heatmap**: Performance aggregation across IT, Banking, Auto, Energy, and FMCG sectors.
 - **Institutional Flows (FII / DII)**: Live net buying/selling statistics.
-- **Stock Modal with Technical Outlook**: Multi-factor scoring model combining RSI, MACD, Bollinger Bands, Moving Averages, and news sentiment.
+- **Stock Modal with Technical Outlook**: The on-device rule score loads six months of price history independently of the selected chart range. It requires 50 valid trading days and shows a loading or insufficient-data state until that condition is met. Recent company headlines load in parallel, with source and date; they are context, not an input to the score. The score has no walk-forward validation claim. When a live quote is unavailable, price and 52-week range stay blank and paper trading is disabled.
 
 #### B. Paper Trading Simulator
 - **Virtual Cash**: Starts with ₹10,00,000 in virtual capital.

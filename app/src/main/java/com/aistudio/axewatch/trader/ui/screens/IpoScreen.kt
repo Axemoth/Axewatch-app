@@ -30,6 +30,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -100,6 +101,7 @@ fun IpoScreen(
     alertsEnabled: Boolean = false,
     onToggleAlerts: (Boolean) -> Unit = {},
     allotmentSectionTick: Long = 0L,
+    isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // 0: IPOs, GMP & Subscription, 1: Check Allotment
@@ -245,7 +247,7 @@ fun IpoScreen(
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 when (ipoSubTab) {
                     0 -> {
@@ -257,7 +259,7 @@ fun IpoScreen(
                                     if (stage == 0) "OPEN · ${stageRows.size}" else "FORTHCOMING · ${stageRows.size}",
                                     color = AxeTextSecondary, fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                                     modifier = Modifier.padding(top = 6.dp, bottom = 2.dp)
                                 )
                             }
                             items(stageRows, key = { "current_${it.issue.symbol}_${it.issue.companyName}" }) { row ->
@@ -282,11 +284,16 @@ fun IpoScreen(
                                         .padding(32.dp),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Text(
-                                        text = "No open or forthcoming IPOs loaded — pull to refresh",
-                                        color = AxeTextMuted,
-                                        fontSize = 13.sp
-                                    )
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (isLoading) {
+                                            CircularProgressIndicator(color = AxePrimaryCyan,
+                                                strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(10.dp))
+                                        }
+                                        Text(if (isLoading) "Loading live IPOs and GMP…"
+                                            else "No open or forthcoming IPOs available. Pull to refresh.",
+                                            color = AxeTextMuted, fontSize = 13.sp)
+                                    }
                                 }
                             }
                         }
@@ -335,6 +342,7 @@ fun IpoScreen(
                 onClearHistory = onClearHistory,
                 alertsEnabled = alertsEnabled,
                 onToggleAlerts = onToggleAlerts,
+                isLoading = isLoading,
                 initialSelectedSymbol = selectedIpoForCheck
             )
         }
@@ -367,65 +375,49 @@ private fun IpoIssueCard(
             .clip(RoundedCornerShape(12.dp))
             .background(AxeDarkSurface)
             .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
-            .padding(14.dp)
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Column {
-            // Header Row: Title, SME/Mainboard, Status
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f, fill = false),
-                    verticalAlignment = Alignment.CenterVertically
+            // Keep the name on its own line. A long SME name must never squeeze
+            // its badge into a one-character-wide column on narrow phones.
+            Text(
+                text = ipo.companyName,
+                color = AxeTextPrimary,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (isSme) AxeAmber.copy(alpha = 0.14f) else AxePrimaryCyan.copy(alpha = 0.14f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
                 ) {
-                    Text(
-                        text = ipo.companyName,
-                        color = AxeTextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(if (isSme) AxeAmber.copy(alpha = 0.2f) else AxePrimaryCyan.copy(alpha = 0.2f))
-                            .padding(horizontal = 5.dp, vertical = 2.dp)
-                    ) {
-                        Text(
-                            text = ipo.category,
-                            color = if (isSme) AxeAmber else AxePrimaryCyan,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Text(ipo.category, color = if (isSme) AxeAmber else AxePrimaryCyan,
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                        maxLines = 1, softWrap = false)
                 }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(statusColor.copy(alpha = 0.15f))
-                            .padding(horizontal = 8.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            text = displayStatus,
-                            color = statusColor,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(statusColor.copy(alpha = 0.12f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                ) {
+                    Text(displayStatus, color = statusColor, fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
                 }
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
+            Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "${ipo.priceBand} · ${if (isPreBidding) "Opens ${ipo.issueOpenDate.ifBlank { "TBA" }}" else "Closes ${ipo.issueCloseDate.ifBlank { "TBA" }}"}",
                 color = AxeTextSecondary, fontSize = 11.sp,
                 maxLines = 1, overflow = TextOverflow.Ellipsis
             )
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(6.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -447,7 +439,7 @@ private fun IpoIssueCard(
                     )
                 }
             }
-            if (!isPreBidding) {
+            if (!isPreBidding && (ipo.qibSub > 0 || ipo.niiSub > 0 || ipo.riiSub > 0)) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     SubscriptionItem("QIB", if (ipo.qibSub > 0) "${ipo.qibSub}x" else "—")
@@ -488,7 +480,7 @@ private fun IpoIssueCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(7.dp))
 
             // Dates & Registrar with Direct Portal Link
             Row(
@@ -670,8 +662,8 @@ private fun IpoIssueCard(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
-                        .background(AxeEmeraldGreen.copy(alpha = 0.15f))
-                        .border(1.dp, AxeEmeraldGreen.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .background(AxeDarkSurfaceElevated)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(8.dp))
                         .clickable(onClick = onCheckAllotment)
                         .heightIn(min = 40.dp)
                         .padding(horizontal = 8.dp, vertical = 8.dp),
@@ -681,15 +673,18 @@ private fun IpoIssueCard(
                         Icon(
                             imageVector = Icons.Default.VerifiedUser,
                             contentDescription = null,
-                            tint = AxeEmeraldGreen,
+                            tint = AxePrimaryCyan,
                             modifier = Modifier.size(14.dp)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
                             text = "Check Allotment",
-                            color = AxeEmeraldGreen,
+                            color = AxeTextPrimary,
                             fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            softWrap = false,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                 }

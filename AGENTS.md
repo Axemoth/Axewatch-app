@@ -172,6 +172,10 @@ History of removed fabrications (do not reintroduce):
   name joins and subscription joins may
   use only an exact normalized key or one unique ≥10-character partial match;
   never take the first of several candidates.
+  Keep company names full-width with Mainboard/SME and status chips on a
+  separate line; a long SME name once squeezed its chip into vertical letters
+  (issue #1). Keep collapsed cards short and the allotment check action in a
+  neutral action color; reserve green/red for measured outcomes.
 - **Price/subscription honesty**: a single published issue price is not a
   price band; do not invent a 95% lower bound. A combined SME NII/HNI value
   is not separate sHNI and bHNI values. Unknown splits show `—`.
@@ -203,6 +207,32 @@ History of removed fabrications (do not reintroduce):
   Check button shows a spinner and disables while busy; LOOKUP_FAILED rows
   carry a one-tap retry resolved via the vault (records alone never
   re-identify a PAN).
+  The check form and saved holder selector lead the Allotment screen; health,
+  registrar counts, featured issues, and history follow. Never call the
+  on-device PAN vault "encrypted" or "PII compliant" without implementing and
+  verifying those properties. A slow IPO refresh shows a loading state.
+- **Index membership**: `IndexMembershipService` downloads the official
+  NSE Indices CSV for NIFTY 50, Bank, IT, Auto, and Metal when an index opens.
+  Parse the published company/industry/symbol columns; CSV includes no live
+  quote or current weight, so both remain unknown. Cache the verified CSV
+  for 24h in app preferences and use the last valid copy on an outage. The
+  SENSEX reference list is local and must not claim live weights. India VIX
+  has no constituent stocks. Unquoted rows remain tappable and request a
+  single Yahoo quote on demand; do not bulk-poll all constituents.
+- **News**: RBI press/notification and SEBI official RSS feeds, plus a recent
+  India market Google News search, feed the Stocks panel. Only dated, recent,
+  keyword-relevant linked headlines are displayed, labeled as news rather
+  than a proven cause of price movement. Per-stock headlines load separately.
+  Missing feeds return empty with neutral sentiment; the old fabricated
+  "Market pulse" fallback must not return.
+- **Outlook loading**: compute the on-device technical score from a separate
+  six-month daily history regardless of chart timeframe; require 50 valid
+  bars for SMA50. Show explicit loading/insufficient states, never 0-valued
+  stops or an invented eight-day horizon as a real prediction. Fetch company
+  news in parallel and display it as context, not a score input. A missing
+  measured NIFTY quote contributes zero market factor.
+  An unquoted stock hides its 52-week gauge and cannot start a paper trade;
+  zero is not a displayed current price.
 
 ## 4. Build & test
 

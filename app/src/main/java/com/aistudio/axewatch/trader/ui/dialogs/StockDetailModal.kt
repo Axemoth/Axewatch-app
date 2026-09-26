@@ -1,5 +1,7 @@
 package com.aistudio.axewatch.trader.ui.dialogs
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +27,7 @@ import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,12 +44,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.model.CandleBar
 import com.aistudio.axewatch.trader.data.model.StockQuote
 import com.aistudio.axewatch.trader.data.model.TradeOutlook
+import com.aistudio.axewatch.trader.data.remote.NewsItem
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.aistudio.axewatch.trader.ui.components.CandlestickChart
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
@@ -69,6 +77,9 @@ fun StockDetailModal(
     stock: StockQuote,
     candles: List<CandleBar>,
     outlook: TradeOutlook?,
+    outlookLoading: Boolean = false,
+    newsItems: List<NewsItem> = emptyList(),
+    newsLoading: Boolean = false,
     selectedTimeframe: String = "1M",
     onTimeframeSelected: (String) -> Unit = {},
     isWatchlisted: Boolean = false,
@@ -77,6 +88,7 @@ fun StockDetailModal(
     onTakeTrade: (StockQuote, TradeOutlook?) -> Unit
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val context = LocalContext.current
     val isBull = stock.isPositive
     val trendColor = if (isBull) AxeEmeraldGreen else AxeRoseRed
     var alertPrice by remember { mutableStateOf<Double?>(null) }
@@ -101,9 +113,10 @@ fun StockDetailModal(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(stock.symbol, color = AxeTextPrimary, fontSize = 20.sp, fontWeight = FontWeight.ExtraBold)
+                        Text(stock.symbol, color = AxeTextPrimary, fontSize = 20.sp,
+                            fontWeight = FontWeight.ExtraBold, maxLines = 1)
                         Spacer(modifier = Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
@@ -220,9 +233,10 @@ fun StockDetailModal(
             val rangeProgress = if (has52wRange) {
                 ((curPrice - wLowV) / (wHighV - wLowV)).toFloat().coerceIn(0f, 1f)
             } else 0f
-            val pctFromHigh = if (wHigh != null && wHigh > 0) ((curPrice - wHigh) / wHigh) * 100 else null
-            val pctFromLow = if (wLow != null && wLow > 0) ((curPrice - wLow) / wLow) * 100 else null
+            val pctFromHigh = if (curPrice > 0 && wHigh != null && wHigh > 0) ((curPrice - wHigh) / wHigh) * 100 else null
+            val pctFromLow = if (curPrice > 0 && wLow != null && wLow > 0) ((curPrice - wLow) / wLow) * 100 else null
 
+            if (has52wRange && curPrice > 0) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -312,6 +326,7 @@ fun StockDetailModal(
             }
 
             Spacer(modifier = Modifier.height(14.dp))
+            }
 
             // Local what-if price check (no monitoring exists — see state comment)
             Box(
@@ -431,8 +446,9 @@ fun StockDetailModal(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Quantitative Outlook (Axewatch Model)
-            if (outlook != null) {
+            // The technical signal uses a separate six-month history, so chart
+            // timeframe changes cannot silently weaken its 50-day SMA input.
+            if (outlook != null && outlook.signal != "INSUFFICIENT DATA") {
                 // Three-way: an absent signal is not a sell call.
                 val isBuy = outlook.signal.contains("BUY")
                 val isSell = outlook.signal.contains("SELL")
@@ -456,7 +472,7 @@ fun StockDetailModal(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("AXEWATCH QUANT OUTLOOK", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            Text("TECHNICAL OUTLOOK", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                             Text(
                                 outlook.walkForwardAccuracy?.let { "Walk-Forward Acc: $it%" } ?: "Rule-based · unvalidated",
                                 color = AxeAmber, fontSize = 11.sp, fontWeight = FontWeight.Bold
@@ -489,7 +505,7 @@ fun StockDetailModal(
                                 // Score domain is -100..+100, so a "/100" suffix would be wrong.
                                 Text("Score: ${outlook.score}", color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                             }
-                            Text("Horizon: ~${outlook.estimatedDays} days", color = AxeTextSecondary, fontSize = 11.sp)
+                            Text(if (outlook.estimatedDays > 0) "Horizon: ~${outlook.estimatedDays} days" else "Horizon: unavailable", color = AxeTextSecondary, fontSize = 11.sp)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -526,13 +542,54 @@ fun StockDetailModal(
                         }
                     }
                 }
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(AxeDarkSurface).padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (outlookLoading) {
+                        CircularProgressIndicator(color = AxePrimaryCyan,
+                            strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    Text(if (outlookLoading) "Loading six months of price history for analysis…"
+                        else "Technical outlook unavailable: at least 50 valid trading days are required.",
+                        color = AxeTextSecondary, fontSize = 12.sp)
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Text("RECENT COMPANY NEWS", color = AxeTextSecondary, fontSize = 10.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Spacer(Modifier.height(6.dp))
+            if (newsItems.isEmpty()) {
+                Text(if (newsLoading) "Loading verified headlines…" else "No recent headlines available.",
+                    color = AxeTextMuted, fontSize = 12.sp)
+            } else {
+                newsItems.take(5).forEach { item ->
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                            .clip(RoundedCornerShape(9.dp)).background(AxeDarkSurface)
+                            .clickable(enabled = item.link.startsWith("https://")) {
+                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(item.link)))
+                            }.padding(horizontal = 12.dp, vertical = 9.dp)
+                    ) {
+                        Text(item.title, color = AxeTextPrimary, fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium, maxLines = 2)
+                        Text("${item.source} · ${SimpleDateFormat("dd MMM, HH:mm", Locale.ENGLISH).format(Date(item.publishedAtMillis))}",
+                            color = AxeTextMuted, fontSize = 10.sp)
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
 
             // Action Button: "Take this trade"
             Button(
                 onClick = { onTakeTrade(stock, outlook) },
+                enabled = stock.lastPrice > 0,
                 colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
                 shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
@@ -543,7 +600,7 @@ fun StockDetailModal(
                 Icon(Icons.Default.TrendingUp, contentDescription = null, tint = OnPrimaryDark)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Take this Trade in Paper Trading",
+                    text = if (stock.lastPrice > 0) "Take this Trade in Paper Trading" else "Live quote needed to trade",
                     color = OnPrimaryDark,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold

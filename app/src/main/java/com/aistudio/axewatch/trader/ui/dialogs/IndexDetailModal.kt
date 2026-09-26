@@ -24,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.BasicAlertDialog
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -66,6 +67,7 @@ import com.aistudio.axewatch.trader.ui.theme.AxeTextSecondary
 fun IndexDetailModal(
     index: MarketIndex,
     constituents: List<IndexConstituent>,
+    isLoading: Boolean = false,
     onStockClick: (StockQuote) -> Unit,
     onDismiss: () -> Unit,
     // Live quotes by symbol (empty when the feed is down). The static provider
@@ -100,7 +102,7 @@ fun IndexDetailModal(
             1 -> list.sortedByDescending { liveQuotes[it.symbol]?.percentChange ?: 0.0 }
             2 -> list.sortedBy { liveQuotes[it.symbol]?.percentChange ?: 0.0 }
             3 -> list.sortedBy { it.symbol }
-            else -> list.sortedByDescending { it.weightPercent }
+            else -> list
         }
     }
 
@@ -154,7 +156,8 @@ fun IndexDetailModal(
                         }
                     }
                     Text(
-                        text = "Benchmark Index Constituents & Sector Weights",
+                        text = if (index.symbol == "SENSEX") "Index constituent reference list"
+                            else "Official NSE Indices constituent list",
                         color = AxeTextMuted,
                         fontSize = 11.sp
                     )
@@ -193,7 +196,7 @@ fun IndexDetailModal(
                         Column {
                             Text("Current Value", color = AxeTextMuted, fontSize = 10.sp)
                             Text(
-                                text = "₹${"%,.2f".format(index.lastPrice)}",
+                                text = if (index.lastPrice > 0) "%,.2f".format(index.lastPrice) else "—",
                                 color = AxeTextPrimary,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Black
@@ -207,7 +210,7 @@ fun IndexDetailModal(
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = "${if (isBull) "▲ +" else "▼ "}${"%,.2f".format(index.change)} (${index.percentChange}%)",
+                                text = if (index.lastPrice > 0) "${if (isBull) "▲ +" else "▼ "}${"%,.2f".format(index.change)} (${index.percentChange}%)" else "—",
                                 color = trendColor,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
@@ -321,7 +324,7 @@ fun IndexDetailModal(
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("Weight", "Gainers", "Losers", "A-Z").forEachIndexed { idx, label ->
+                    listOf("Index", "Gainers", "Losers", "A-Z").forEachIndexed { idx, label ->
                         val isSel = sortMode == idx
                         Box(
                             modifier = Modifier
@@ -353,7 +356,15 @@ fun IndexDetailModal(
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text("No constituent stocks match '$searchQuery'", color = AxeTextMuted, fontSize = 12.sp)
+                        if (isLoading) CircularProgressIndicator(color = AxePrimaryCyan, modifier = Modifier.size(24.dp))
+                        Text(
+                            when {
+                                isLoading -> "Loading the complete constituent list…"
+                                index.symbol == "INDIAVIX" -> "India VIX is a volatility index, not a basket of stocks."
+                                constituents.isEmpty() -> "Constituent list unavailable. Reopen to retry."
+                                else -> "No constituent stocks match '$searchQuery'"
+                            }, color = AxeTextMuted, fontSize = 12.sp
+                        )
                         Spacer(modifier = Modifier.height(6.dp))
                         Box(
                             modifier = Modifier
@@ -386,12 +397,9 @@ fun IndexDetailModal(
                                 .clip(RoundedCornerShape(10.dp))
                                 .background(AxeDarkSurface)
                                 .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                                .clickable(enabled = live != null) {
-                                    val quote = live
-                                    if (quote != null) {
-                                        onDismiss()
-                                        onStockClick(quote)
-                                    }
+                                .clickable {
+                                    onDismiss()
+                                    onStockClick(live ?: stock.toStockQuote())
                                 }
                                 .testTag("constituent_${stock.symbol}")
                                 .padding(12.dp)
@@ -410,7 +418,7 @@ fun IndexDetailModal(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Box(
+                                        if (stock.weightPercent > 0) Box(
                                             modifier = Modifier
                                                 .clip(RoundedCornerShape(4.dp))
                                                 .background(AxeDarkSurfaceElevated)
