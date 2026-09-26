@@ -62,6 +62,15 @@ fun parseLooseDate(text: String, nowYear: Int = java.util.Calendar.getInstance()
         val year = if (y.length == 2) 2000 + y.toLong() else y.toLong()
         return year * 10000 + mo.toLong() * 100 + d.toLong()
     }
+    m = Regex("(?i)(\\d{1,2})[-/ ]([a-z]{3,9})[-/ ](\\d{2,4})").find(t)
+    if (m != null) {
+        val (d, monthText, rawYear) = m.destructured
+        val month = LOOSE_MONTHS.entries.firstOrNull { monthText.lowercase().startsWith(it.key) }?.value
+        if (month != null) {
+            val year = rawYear.toLong().let { if (rawYear.length == 2) 2000 + it else it }
+            return year * 10000 + month * 100 + d.toLong()
+        }
+    }
     val monthHit = LOOSE_MONTHS.entries.firstOrNull { (k, _) -> k in t.lowercase() }
     // First plausible day-of-month (a bare year like "Sep 2026" has none).
     val day = Regex("\\d{1,4}").findAll(t)
@@ -321,8 +330,24 @@ data class GmpItem(
     val estListingPrice: Double,
     val status: String, // "Open", "Upcoming", "Closed", "Listed"
     val fireRating: Int, // 1 to 5
-    val lastUpdated: String
+    val lastUpdated: String,
+    val category: String = "Unknown"
 )
+
+/** Current issues lead the board; higher measured GMP leads within each stage. */
+fun sortGmpBoard(items: List<GmpItem>, issues: List<IpoIssue> = emptyList()): List<GmpItem> {
+    val dates = issues.associate { it.symbol to ipoRecencyKey(it) }
+    fun stage(status: String) = when (status.lowercase()) {
+        "open", "active" -> 0
+        "upcoming", "forthcoming" -> 1
+        "closed" -> 2
+        else -> 3
+    }
+    return items.sortedWith(compareBy<GmpItem> { stage(it.status) }
+        .thenByDescending { it.gmpAmount }
+        .thenByDescending { dates[it.symbol] ?: 0L }
+        .thenBy { it.companyName })
+}
 
 data class PastIpoItem(
     val symbol: String,
@@ -335,7 +360,8 @@ data class PastIpoItem(
     val listingGainPercent: Double,
     val currentGainPercent: Double = 0.0,
     val totalSub: Double = 0.0,
-    val listingDate: String = ""
+    val listingDate: String = "",
+    val category: String = "Unknown"
 )
 
 data class TradeIdea(

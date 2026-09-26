@@ -24,6 +24,7 @@ class IpoDateHelpersTest {
         assertEquals(20260918L, parseLooseDate("18 Sept 2026"))
         assertEquals(20260918L, parseLooseDate("2026-09-18"))
         assertEquals(20260918L, parseLooseDate("18-09-2026"))
+        assertEquals(20250918L, parseLooseDate("18-Sep-25", nowYear = 2026))
         assertEquals(0L, parseLooseDate("—"))
         assertEquals(0L, parseLooseDate("TBA"))
         assertEquals(0L, parseLooseDate(""))

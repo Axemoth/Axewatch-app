@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import org.json.JSONArray
 import org.json.JSONObject
 import org.xmlpull.v1.XmlPullParser
@@ -46,7 +47,10 @@ data class AllotmentQueryResult(
  *  outcome: callers must surface it as a failed check, not "not applied". */
 class AllotmentTransportException(message: String) : Exception(message)
 
-class IpoAllotmentService(private val kfinEndpoint: String = KFIN_URL) {
+class IpoAllotmentService(
+    private val kfinEndpoint: String = KFIN_URL,
+    private val maashitlaApiBase: String = MAASHITLA_API_BASE
+) {
 
     /** (sourceId, ok, latencyMs) — wired by the repository into health stats. */
     var onSourceResult: (String, Boolean, Int) -> Unit = { _, _, _ -> }
@@ -55,6 +59,7 @@ class IpoAllotmentService(private val kfinEndpoint: String = KFIN_URL) {
         private const val TAG = "IpoAllotmentService"
         private const val MUFG_BASE = "https://in.mpms.mufg.com/Initial_Offer/"
         private const val KFIN_URL = "https://0uz601ms56.execute-api.ap-south-1.amazonaws.com/prod/api/query"
+        private const val MAASHITLA_API_BASE = "https://api.maashitla.com/api"
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
         private val AES_KEY_BYTES = "8080808080808080".toByteArray(Charsets.UTF_8)
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -239,9 +244,26 @@ class IpoAllotmentService(private val kfinEndpoint: String = KFIN_URL) {
         val regLower = registrarHint.trim().lowercase()
         val isBigshare = regLower.contains("bigshare")
         val isOtherManual = regLower.contains("skyline") || regLower.contains("cameo") ||
-            regLower.contains("maashitla") || regLower.contains("purva") || regLower.contains("beetal")
+            regLower.contains("purva") || regLower.contains("beetal")
 
-        // 2. Bigshare & other manual CAPTCHA-walled registrars
+        if (regLower.contains("maashitla")) {
+            val started = System.currentTimeMillis()
+            try {
+                val result = checkMaashitlaAllotment(cleanPan, ipoSymbol, ipoCompanyName)
+                onSourceResult("allot_maashitla", true, (System.currentTimeMillis() - started).toInt())
+                if (result == null) return@withContext if (allotmentDeclared) uncoveredResult(ipoCompanyName, "Maashitla")
+                    else pendingResult(ipoCompanyName)
+                return@withContext if (result.status == "ALLOTTED" || allotmentDeclared) result
+                    else pendingResult(ipoCompanyName)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                onSourceResult("allot_maashitla", false, (System.currentTimeMillis() - started).toInt())
+                Log.w(TAG, "Maashitla lookup failed: ${e.javaClass.simpleName}")
+                return@withContext failedResult(ipoCompanyName)
+            }
+        }
+
+        // 2. Bigshare is CAPTCHA-walled; other portals need manual handoff.
         if (isBigshare || isOtherManual) {
             val regName = if (isBigshare) "Bigshare" else registrarHint
             val msg = if (isBigshare) {
@@ -379,6 +401,62 @@ class IpoAllotmentService(private val kfinEndpoint: String = KFIN_URL) {
         false, registrar.ifBlank { "Official Registrar" }, company, 0, 0, "UNCOVERED", "", "",
         "Automated coverage is not confirmed for this IPO — use the official registrar portal."
     )
+
+    /** Maashitla's official public-issues page uses these two JSON endpoints.
+     *  Match its company dropdown first so one issuer's PAN result cannot be
+     *  attributed to another. Never include the request URL in logs/errors. */
+    private suspend fun checkMaashitlaAllotment(
+        pan: String, symbol: String, companyName: String
+    ): AllotmentQueryResult? {
+        pace("allot_maashitla", 1500)
+        val listRequest = Request.Builder()
+            .url("$maashitlaApiBase/public-issue/companies")
+            .header("User-Agent", USER_AGENT)
+            .header("ngrok-skip-browser-warning", "true")
+            .build()
+        val companies = client.newCall(listRequest).execute().use { response ->
+            if (!response.isSuccessful) throw AllotmentTransportException("Maashitla company list HTTP ${response.code}")
+            val body = response.body?.string() ?: throw AllotmentTransportException("Maashitla company list empty")
+            val rows = JSONArray(body)
+            (0 until rows.length()).mapNotNull { index ->
+                val row = rows.optJSONObject(index) ?: return@mapNotNull null
+                val name = row.optString("company_name").trim()
+                val id = row.optString("company_id").trim()
+                if (name.isBlank() || id.isBlank()) null else MufgCompany(id, name)
+            }
+        }
+        val company = findBestCompanyMatch(companyName, symbol, companies) ?: return null
+        val url = "$maashitlaApiBase/public-issue/search".toHttpUrl().newBuilder()
+            .addQueryParameter("company_name", company.name)
+            .addQueryParameter("pan", pan)
+            .build()
+        val request = Request.Builder().url(url)
+            .header("User-Agent", USER_AGENT)
+            .header("ngrok-skip-browser-warning", "true")
+            .build()
+        return client.newCall(request).execute().use { response ->
+            if (response.code == 404) return@use notFoundResult(companyName, "No application record found on Maashitla")
+            if (!response.isSuccessful) throw AllotmentTransportException("Maashitla search HTTP ${response.code}")
+            val body = response.body?.string() ?: throw AllotmentTransportException("Maashitla search empty")
+            parseMaashitlaJson(body, companyName)
+        }
+    }
+
+    internal fun parseMaashitlaJson(body: String, companyName: String): AllotmentQueryResult {
+        val row = try { JSONObject(body) } catch (_: Exception) {
+            throw AllotmentTransportException("Maashitla malformed result")
+        }
+        if (!row.has("shares_alloted") && !row.has("shares_allotted")) {
+            throw AllotmentTransportException("Maashitla missing allotment field")
+        }
+        val applied = parseShareCount(row.opt("shares_applied"))
+        val allotted = parseShareCount(row.opt("shares_alloted") ?: row.opt("shares_allotted"))
+        return AllotmentQueryResult(
+            true, "Maashitla", companyName, applied, allotted,
+            if (allotted > 0) "ALLOTTED" else "NOT_ALLOTTED",
+            "", maskApplicantName(row.optString("name"))
+        )
+    }
 
     private suspend fun checkMufgAllotment(pan: String, companyId: String, companyName: String): AllotmentQueryResult {
         // Warm the session: token issuance is cookie-bound.

@@ -286,7 +286,8 @@ class AxewatchRepository(
 
     private val allotSourceStats = mutableMapOf(
         "allot_mufg" to SourceStat(),
-        "allot_kfin" to SourceStat()
+        "allot_kfin" to SourceStat(),
+        "allot_maashitla" to SourceStat()
     )
 
     fun recordAllotSource(id: String, ok: Boolean, ms: Int) {
@@ -309,10 +310,11 @@ class AxewatchRepository(
         _registrarHealth.value = listOf(
             entry("allot_mufg", "MUFG Intime"),
             entry("allot_kfin", "KFintech"),
+            entry("allot_maashitla", "Maashitla"),
             entry("allot_regdir", "Registrar Directory"),
             RegistrarSourceHealth("bigshare", "Bigshare", "CAPTCHA_HANDOFF", 0, "Manual captcha required. 1-tap browser handoff"),
-            RegistrarSourceHealth("bse", "BSE India", "CAPTCHA_HANDOFF", 0, "Manual captcha + bot wall. Use the manual link"),
-            RegistrarSourceHealth("nse", "NSE India", "CAPTCHA_HANDOFF", 0, "Manual verification + bot wall. Use the manual link")
+            RegistrarSourceHealth("bse", "BSE India", "IDLE", 0, "Official portal verification"),
+            RegistrarSourceHealth("nse", "NSE India", "IDLE", 0, "Official portal verification")
         ) + extra
     }
 
@@ -1178,7 +1180,7 @@ class AxewatchRepository(
         RegistrarLink("Bigshare Services", "Bigshare SME & Mainboard status (captcha)", "https://ipo.bigshareonline.com/ipo_status.html", "Registrar"),
         RegistrarLink("Skyline Financial", "Skyline RTA IPO query portal", "https://www.skylinerta.com/ipo.php", "Registrar"),
         RegistrarLink("Cameo Corporate", "Cameo India IPO status checker", "https://ipostatus.cameoindia.com/", "Registrar"),
-        RegistrarLink("Maashitla Securities", "Maashitla allotment status check", "https://maashitla.com/allotment-status", "Registrar"),
+        RegistrarLink("Maashitla Securities", "Maashitla public-issues PAN search", "https://maashitla.com/allotment-status/public-issues/", "Registrar"),
         RegistrarLink("Purva Sharegistry", "Purva Sharegistry investor query", "https://www.purvashare.com/investor-service/ipo-query", "Registrar"),
         RegistrarLink("Beetal Financial", "Beetal Financial computer services", "https://www.beetalfinancial.com/", "Registrar")
     )

@@ -8,7 +8,8 @@ Allotment alerts use Android WorkManager (roughly every six hours while connecte
 and the battery is not low). Allow notifications in Android settings and enable
 the Allotment alert toggle. Blocked notifications remain pending: saved decisive
 results are delivered on a later worker run without another registrar query.
-Bigshare and other CAPTCHA-protected registrars require a manual check.
+Bigshare requires a CAPTCHA and an official-portal check. Maashitla PAN
+checks run in the app; other unsupported registrars offer a portal handoff.
 
 Registrar matching prefers exact company names and refuses ambiguous partial
 matches. IPO/GMP rows display as soon as their feed arrives while registrar
@@ -40,7 +41,9 @@ Axewatch App
 
 #### A. IPOs & GMP Board
 - **Active & Forthcoming Issues**: Real-time Mainboard and SME IPO issues fetched from live aggregators.
-- **Recency-First Sorting**: All IPO issues and GMP items are strictly sorted descending from latest to oldest (`compareByDescending { ipoRecencyKey(it) }`).
+- **Clear ordering**: Issues are recent-first. The GMP board shows Open and Upcoming issues first, with the highest measured GMP at the top of each stage and a Mainboard/SME tag.
+- **Compact cards**: Issue summaries stay short; tap **More Details** for registrar, dates, subscription breakdown, and the calculator.
+- **Past listings**: Issue, listing, and current prices come from their distinct source columns. Missing prices display `—` rather than a copied issue price.
 - **Live Subscription Tracking**: SEBI subscription splits parsed in real-time across:
   - **QIB** (Qualified Institutional Buyers)
   - **NII** (Non-Institutional Investors)
@@ -63,10 +66,11 @@ Axewatch App
 - **Automated PAN Lookup**:
   - **MUFG Intime**: Session warmup with AES-CBC token encryption against `SearchOnPan` returning real allotment data.
   - **KFintech**: Direct `reqparam` header query against AWS API gateway endpoint.
+- **Maashitla**: Official public-issue company list and PAN search, with allotted share counts when returned.
 - **Registrar Directory**: Dynamic 43+ company attribution across registrars and declared basis-of-allotment dates.
-- **Family PAN Vault**: On-device secure storage for multiple family PANs with 1-tap bulk checking.
+- **Family PAN Vault**: On-device Room storage for multiple family PANs with 1-tap bulk checking. Device storage encryption depends on Android settings.
 - **Strict PII Protection**: Full PAN numbers are stored strictly on-device in Room database, masked everywhere (`AB*****F`), and never logged or exposed.
-- **Manual Allotment Journal**: Capability to hand-log allotment outcomes for captcha-walled portals (Bigshare, BSE, NSE).
+- **Manual Allotment Journal**: Hand-log outcomes checked on official portals; Bigshare requires CAPTCHA.
 
 ---
 

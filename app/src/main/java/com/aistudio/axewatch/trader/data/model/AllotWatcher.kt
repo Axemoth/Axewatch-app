@@ -58,7 +58,8 @@ fun pendingAllotNotifications(
 /** True when the registrar offers an automated on-device PAN search. */
 fun registrarAutoCheckable(registrar: String): Boolean {
     val l = registrar.lowercase()
-    return l == "mufg" || l == "kfin" || "mufg" in l || "intime" in l || l == "kfintech" || "kfin" in l
+    return l == "mufg" || l == "kfin" || "mufg" in l || "intime" in l ||
+        l == "kfintech" || "kfin" in l || "maashitla" in l
 }
 
 /**
@@ -124,6 +125,6 @@ object AllotNotifyText {
             "$count saved application${if (count == 1) " was" else "s were"} not allotted. Tap to review."
 
     fun manualNudge(issueName: String, registrar: String): Pair<String, String> =
-        "Results out: $issueName" to
-            "$registrar needs one manual check (captcha). Tap to open the Allotment tab."
+        "Check allotment: $issueName" to
+            "$registrar needs a portal check${if (registrar.contains("bigshare", ignoreCase = true)) " with CAPTCHA" else ""}. Tap to open the Allotment tab."
 }

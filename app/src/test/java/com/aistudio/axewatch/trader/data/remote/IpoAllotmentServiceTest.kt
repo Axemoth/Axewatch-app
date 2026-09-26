@@ -275,7 +275,7 @@ class IpoAllotmentServiceTest {
 
     @Test
     fun `manual registrars return MANUAL_CHECK_REQUIRED without network calls`() = runBlocking {
-        for (reg in listOf("Skyline Financial", "Cameo Corporate", "Maashitla Securities", "Purva Sharegistry", "Beetal Financial")) {
+        for (reg in listOf("Skyline Financial", "Cameo Corporate", "Purva Sharegistry", "Beetal Financial")) {
             val r = svc.queryAllotment(
                 pan = "ABCDE1234F",
                 ipoCompanyName = "SME Issue",
@@ -285,6 +285,7 @@ class IpoAllotmentServiceTest {
                 registrarHint = reg
             )
             assertEquals("MANUAL_CHECK_REQUIRED", r.status)
+            assertFalse(r.note.contains("CAPTCHA", ignoreCase = true))
             assertFalse(r.found)
             assertTrue(r.note.contains("official portal"))
         }

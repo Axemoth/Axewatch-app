@@ -87,4 +87,48 @@ class IpoGmpTablesTest {
         assertEquals(past, svc.pickPastTable(listOf(past, main)))
         assertNull(svc.pickPastTable(listOf(main)))
     }
+
+    @Test
+    fun `performance headers keep issue listing and current prices separate`() {
+        val aliases = IpoGmpService.PERF_COLUMN_ALIASES
+        assertEquals("price", svc.matchColumnAlias("Price ▲ ▼", aliases))
+        assertEquals("listing_price", svc.matchColumnAlias("Listing Price ▲ ▼", aliases))
+        assertEquals("current_price", svc.matchColumnAlias("Closing Price (LTP) ▲ ▼", aliases))
+        assertEquals("listing_date", svc.matchColumnAlias("Listing Dt ▲ ▼", aliases))
+    }
+
+    @Test
+    fun `live shaped performance rows retain each issuer own prices`() {
+        val html = """<table><thead><tr><th>IPO ▲ ▼</th><th>Symbol ▲ ▼</th><th>Listing Dt ▲ ▼</th><th>Sub ▲ ▼</th><th>Price ▲ ▼</th><th>Listing Price ▲ ▼</th><th>Closing Price (LTP) ▲ ▼</th></tr></thead><tbody>
+          <tr><td>Axiom Gas Engineering SME</td><td>AXIOMGAS</td><td>25-Sep-26</td><td>1.39x</td><td>₹54.00</td><td>₹54.75 (1.39%)</td><td>₹54.05 (0.09%)</td></tr>
+          <tr><td>NSE</td><td>544937</td><td>24-Sep-26</td><td>5.71x</td><td>₹1785.00</td><td>₹1800.00 (0.84%)</td><td>₹1792.65 (0.43%)</td></tr>
+        </tbody></table>"""
+        val rows = svc.parseInvestorGainPastRows(svc.parseTables(html, IpoGmpService.PERF_COLUMN_ALIASES))
+        assertEquals(2, rows.size)
+        assertEquals(54.0, rows[0].issuePrice, 0.001)
+        assertEquals(54.75, rows[0].listingPrice, 0.001)
+        assertEquals(54.05, rows[0].currentPrice, 0.001)
+        assertEquals("SME", rows[0].category)
+        assertEquals(1785.0, rows[1].issuePrice, 0.001)
+        assertEquals(1800.0, rows[1].listingPrice, 0.001)
+        assertEquals(1792.65, rows[1].currentPrice, 0.001)
+    }
+
+    @Test
+    fun `missing listing price remains unavailable`() {
+        val html = """<table><tr><th>IPO</th><th>Price</th><th>Listing Price</th><th>Closing Price (LTP)</th></tr>
+          <tr><td>Example Industries</td><td>₹100</td><td>—</td><td>₹104</td></tr></table>"""
+        val rows = svc.parseInvestorGainPastRows(svc.parseTables(html, IpoGmpService.PERF_COLUMN_ALIASES))
+        assertEquals(1, rows.size)
+        assertEquals(0.0, rows[0].listingPrice, 0.001)
+        assertEquals(104.0, rows[0].currentPrice, 0.001)
+    }
+
+    @Test
+    fun `ambiguous partial company name never merges market data`() {
+        val keys = setOf("orientelectronics", "orientengineering")
+        assertNull(svc.uniqueNormalizedMatch(keys, "orient"))
+        assertNull(svc.uniqueNormalizedMatch(setOf("orientcables", "orientcablesltd"), "orientcablesltdindia"))
+        assertEquals("orientelectronics", svc.uniqueNormalizedMatch(keys, "orientelectronicsindia"))
+    }
 }

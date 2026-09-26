@@ -783,7 +783,6 @@ fun AllotmentScreen(
                     val isManualRegistrar = isBigshare ||
                         currentRegistrar.contains("skyline", ignoreCase = true) ||
                         currentRegistrar.contains("cameo", ignoreCase = true) ||
-                        currentRegistrar.contains("maashitla", ignoreCase = true) ||
                         currentRegistrar.contains("purva", ignoreCase = true) ||
                         currentRegistrar.contains("beetal", ignoreCase = true)
                     val isKfin = currentRegistrar.contains("kfin", ignoreCase = true)
@@ -809,7 +808,7 @@ fun AllotmentScreen(
                                         Icon(Icons.Default.Info, contentDescription = null, tint = AxeAmber, modifier = Modifier.size(14.dp))
                                         Spacer(modifier = Modifier.width(6.dp))
                                         Text(
-                                            text = "${if (isBigshare) "Bigshare" else currentIpo.registrar} · Captcha Required",
+                                            text = if (isBigshare) "Bigshare · CAPTCHA required" else "${currentIpo.registrar} · Portal check",
                                             color = AxeAmber,
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold
@@ -826,7 +825,8 @@ fun AllotmentScreen(
                                 }
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Server CAPTCHA is enforced on ${if (isBigshare) "Bigshare" else currentIpo.registrar}. Open their official portal to verify with security code, then log your allotment result below.",
+                                    text = if (isBigshare) "Bigshare requires a CAPTCHA. Open its official portal, then record your result below."
+                                        else "Open ${currentIpo.registrar}'s official portal to verify your result, then record it below.",
                                     color = AxeTextSecondary,
                                     fontSize = 11.sp,
                                     lineHeight = 15.sp
@@ -885,21 +885,21 @@ fun AllotmentScreen(
                                 }
                             }
                         }
-                    } else if (isKfin && currentIpo != null) {
+                    } else if ((isKfin || currentRegistrar.contains("maashitla", ignoreCase = true)) && currentIpo != null) {
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Automated check active via KFintech · ", color = AxeTextMuted, fontSize = 10.sp)
+                            Text("Automated check via ${if (isKfin) "KFintech" else "Maashitla"} · ", color = AxeTextMuted, fontSize = 10.sp)
                             Text(
-                                text = "Open KFintech Portal",
+                                text = "Open official portal",
                                 color = AxePrimaryCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.clickable {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ipostatus.kfintech.com/"))
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(if (isKfin) "https://ipostatus.kfintech.com/" else "https://maashitla.com/allotment-status/public-issues/"))
                                     context.startActivity(intent)
                                 }
                             )
@@ -1236,7 +1236,9 @@ fun AllotmentScreen(
                                 Text("App No: ${record.applicationNo.ifBlank { "—" }}", color = AxeTextMuted, fontSize = 10.sp)
                                 if (record.status == "MANUAL_CHECK_REQUIRED" || record.status == "UNCOVERED") {
                                     Text(
-                                        text = "Server CAPTCHA enforced · Manual check needed on official portal",
+                                        text = if (record.registrar.contains("bigshare", ignoreCase = true))
+                                            "Bigshare CAPTCHA required · Check official portal"
+                                        else "Check the official registrar portal",
                                         color = AxeAmber,
                                         fontSize = 10.sp
                                     )

@@ -457,7 +457,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     "NOT_APPLIED" -> "No application found for ${record.ipoSymbol} on this PAN"
                     "RESULTS_NOT_OUT" -> "Allotment for ${record.ipoSymbol} not finalized yet — try after the basis date"
                     "LOOKUP_FAILED" -> "Could not reach the registrar for ${record.ipoSymbol} — check connection or use portal link"
-                    "MANUAL_CHECK_REQUIRED", "UNCOVERED" -> "Handled by ${record.registrar} — tap 'Open Portal' to check with CAPTCHA and record result"
+                    "MANUAL_CHECK_REQUIRED", "UNCOVERED" -> "Handled by ${record.registrar} — open the official portal and record the result"
                     else -> "Status for ${record.ipoSymbol}: ${record.status}"
                 }
             )

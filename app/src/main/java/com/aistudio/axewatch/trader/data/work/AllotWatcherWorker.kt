@@ -191,7 +191,7 @@ class AllotWatcherWorker(
             }
         }
 
-        // Declared + captcha-walled: nudge once per issue, never queried.
+        // Declared + manual portal: nudge once per issue, never queried.
         val nudges = due.manual.filter { issue ->
             val key = allotNotifyKey(issue.symbol, "MANUAL")
             if (key in notified) return@filter false
@@ -212,7 +212,7 @@ class AllotWatcherWorker(
                 postNotification(
                     SUMMARY_MANUAL_ID,
                     "Results out: ${nudges.size} IPOs",
-                    "${first.name.ifBlank { first.symbol }} and ${nudges.size - 1} more need one manual check (captcha). Tap to open."
+                    "${first.name.ifBlank { first.symbol }} and ${nudges.size - 1} more need a portal check. Tap to open."
                 )
             }
             if (delivered) {

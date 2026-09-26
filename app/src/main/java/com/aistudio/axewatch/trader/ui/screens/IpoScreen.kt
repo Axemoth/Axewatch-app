@@ -36,6 +36,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -62,8 +63,10 @@ import com.aistudio.axewatch.trader.data.model.parseLooseDate
 import com.aistudio.axewatch.trader.data.model.getAllotmentBadge
 import com.aistudio.axewatch.trader.data.model.isAllotmentDayOrAfter
 import com.aistudio.axewatch.trader.data.model.isAllotmentOut
+import com.aistudio.axewatch.trader.data.model.sortGmpBoard
 import com.aistudio.axewatch.trader.data.model.todayLooseDateKey
 import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
+import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 import com.aistudio.axewatch.trader.ui.dialogs.IpoCalculatorDialog
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
@@ -136,10 +139,8 @@ fun IpoScreen(
             it.companyName.contains(searchQuery, ignoreCase = true) ||
             it.symbol.contains(searchQuery, ignoreCase = true)
         }
-        val ipoKeyMap = ipos.associate { it.symbol to ipoRecencyKey(it) }
-        matches.filter { it.symbol.isNotBlank() }
-            .distinctBy { it.symbol }
-            .sortedWith(compareByDescending { ipoKeyMap[it.symbol] ?: parseLooseDate(it.lastUpdated) })
+        sortGmpBoard(matches.filter { it.companyName.isNotBlank() }
+            .distinctBy { IpoAllotmentService.canonIpoName(it.companyName) }, ipos)
     }
 
     val filteredPast = remember(pastIpos, searchQuery) {
@@ -147,8 +148,8 @@ fun IpoScreen(
             it.companyName.contains(searchQuery, ignoreCase = true) ||
             it.symbol.contains(searchQuery, ignoreCase = true)
         }
-        matches.filter { it.symbol.isNotBlank() }
-            .distinctBy { it.symbol }
+        matches.filter { it.companyName.isNotBlank() }
+            .distinctBy { IpoAllotmentService.canonIpoName(it.companyName) }
             .sortedWith(compareByDescending { parseLooseDate(it.listingDate) })
     }
 
@@ -306,7 +307,7 @@ fun IpoScreen(
                                                     fontWeight = FontWeight.Bold
                                                 )
                                                 Text(
-                                                    text = "IPOs scheduled for allotment today or published by registrars",
+                                                    text = "Allotment dates due or results reported by trackers",
                                                     color = AxeTextSecondary,
                                                     fontSize = 10.sp
                                                 )
@@ -354,14 +355,14 @@ fun IpoScreen(
                     }
                     1 -> {
                         // Live GMP Board (Descending Order)
-                        items(filteredGmps, key = { it.symbol }) { gmp ->
+                        items(filteredGmps, key = { it.companyName }) { gmp ->
                             GmpBoardCard(
                                 gmp = gmp,
                                 onClick = {
                                     val match = ipos.find { it.symbol == gmp.symbol } ?: IpoIssue(
                                         symbol = gmp.symbol,
                                         companyName = gmp.companyName,
-                                        category = "Unknown",
+                                        category = gmp.category,
                                         priceBand = "₹${gmp.issuePrice.toInt()}",
                                         issuePrice = gmp.issuePrice,
                                         lotSize = 0,
@@ -403,7 +404,7 @@ fun IpoScreen(
                     }
                     2 -> {
                         // Past Listings (Descending Order)
-                        items(filteredPast, key = { it.symbol }) { past ->
+                        items(filteredPast, key = { it.companyName }) { past ->
                             PastListingCard(past = past)
                         }
                         if (filteredPast.isEmpty()) {
@@ -460,6 +461,7 @@ private fun IpoIssueCard(
     onCheckAllotment: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    var detailsExpanded by rememberSaveable(ipo.symbol) { mutableStateOf(false) }
     val isSme = ipo.category == "SME"
     val isPreBidding = ipo.isBiddingNotStarted()
     val todayKey = remember { todayLooseDateKey() }
@@ -552,15 +554,25 @@ private fun IpoIssueCard(
                 }
             }
 
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(
+                text = "${ipo.priceBand} · Closes ${ipo.issueCloseDate} · Sub ${if (ipo.totalSub > 0) "${ipo.totalSub}x" else "—"}",
+                color = AxeTextSecondary,
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            if (detailsExpanded) {
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Issue Key Details: Price Band, Lot Size, Issue Size
+            // Issue Key Details: published price, lot size, issue size
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Column {
-                    Text("Price Band", color = AxeTextMuted, fontSize = 10.sp)
+                    Text("Issue Price", color = AxeTextMuted, fontSize = 10.sp)
                     Text(ipo.priceBand, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
                 Column {
@@ -724,13 +736,13 @@ private fun IpoIssueCard(
                         )
                         SubscriptionItem(
                             label = "sHNI",
-                            value = if (isPreBidding) "—" else if (ipo.shniSub > 0.0) "${ipo.shniSub}x" else if (ipo.niiSub > 0.0 && isSme) "${ipo.niiSub}x" else "—",
-                            subText = if (isPreBidding) "Pre-apply" else if (ipo.shniSub <= 0.0 && ipo.niiSub > 0.0 && isSme) "Combined" else null
+                            value = if (isPreBidding) "—" else if (ipo.shniSub > 0.0) "${ipo.shniSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else null
                         )
                         SubscriptionItem(
                             label = "bHNI",
-                            value = if (isPreBidding) "—" else if (ipo.bhniSub > 0.0) "${ipo.bhniSub}x" else if (ipo.niiSub > 0.0 && isSme) "${ipo.niiSub}x" else "—",
-                            subText = if (isPreBidding) "Pre-apply" else if (ipo.bhniSub <= 0.0 && ipo.niiSub > 0.0 && isSme) "Combined" else null
+                            value = if (isPreBidding) "—" else if (ipo.bhniSub > 0.0) "${ipo.bhniSub}x" else "—",
+                            subText = if (isPreBidding) "Pre-apply" else null
                         )
                         SubscriptionItem(
                             label = "Retail",
@@ -739,6 +751,13 @@ private fun IpoIssueCard(
                         )
                     }
                 }
+            }
+            Text(
+                text = "Hide details",
+                color = AxePrimaryCyan,
+                fontSize = 11.sp,
+                modifier = Modifier.clickable { detailsExpanded = false }.padding(top = 8.dp)
+            )
             }
 
             // Expected GMP & Listing Gain Calculator trigger
@@ -819,13 +838,15 @@ private fun IpoIssueCard(
                         .clip(RoundedCornerShape(8.dp))
                         .background(AxePrimaryCyan.copy(alpha = 0.15f))
                         .border(1.dp, AxePrimaryCyan.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                        .clickable(onClick = onCalculateGain)
+                        .clickable {
+                            if (detailsExpanded) onCalculateGain() else detailsExpanded = true
+                        }
                         .heightIn(min = 40.dp)
                         .padding(horizontal = 8.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Calculate Gain →",
+                        text = if (detailsExpanded) "Calculate Gain →" else "More Details ↓",
                         color = AxePrimaryCyan,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -909,7 +930,10 @@ private fun GmpBoardCard(
                         text = gmp.companyName,
                         color = AxeTextPrimary,
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f, fill = false),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Box(
@@ -918,7 +942,11 @@ private fun GmpBoardCard(
                             .background(AxeDarkSurfaceElevated)
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
-                        Text(gmp.status, color = AxeTextSecondary, fontSize = 9.sp)
+                        Text(
+                            if (gmp.category == "Unknown") gmp.status else "${gmp.status} · ${gmp.category}",
+                            color = if (gmp.category == "SME") AxeAmber else AxeTextSecondary,
+                            fontSize = 9.sp
+                        )
                     }
                 }
 
@@ -926,21 +954,15 @@ private fun GmpBoardCard(
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        text = "Price: ₹${gmp.issuePrice.toInt()}",
+                        text = "Price: ${if (gmp.issuePrice > 0) "₹${gmp.issuePrice.toInt()}" else "—"}",
                         color = AxeTextMuted,
                         fontSize = 11.sp
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Est: ₹${gmp.estListingPrice.toInt()}",
+                        text = "Est: ${if (gmp.estListingPrice > 0) "₹${gmp.estListingPrice.toInt()}" else "—"}",
                         color = AxePrimaryCyan,
                         fontSize = 11.sp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Rating: ${"*".repeat(gmp.fireRating)}",
-                        color = AxeAmber,
-                        fontSize = 10.sp
                     )
                 }
             }
@@ -980,13 +1002,11 @@ private fun GmpBoardCard(
 
 @Composable
 private fun PastListingCard(past: PastIpoItem) {
-    val curGain = if (past.currentGainPercent != 0.0) {
-        past.currentGainPercent
-    } else if (past.issuePrice > 0.0 && past.currentPrice > 0.0) {
+    val hasListing = past.listingPrice > 0.0
+    val hasCurrent = past.currentPrice > 0.0
+    val curGain = if (hasCurrent && past.issuePrice > 0.0)
         ((past.currentPrice - past.issuePrice) / past.issuePrice * 100.0)
-    } else {
-        past.listingGainPercent
-    }
+    else 0.0
 
     val isListingProfit = past.listingGainPercent >= 0
     val listingGainColor = if (isListingProfit) AxeEmeraldGreen else AxeRoseRed
@@ -1040,7 +1060,7 @@ private fun PastListingCard(past: PastIpoItem) {
                     )
                 }
 
-                Box(
+                if (hasCurrent) Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(6.dp))
                         .background(if (isCurProfit) AxeGreenSubtle else AxeRedSubtle)
@@ -1063,20 +1083,23 @@ private fun PastListingCard(past: PastIpoItem) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Issue: ₹${"%,.1f".format(past.issuePrice)}",
+                    text = "Issue: ${if (past.issuePrice > 0) "₹${"%,.1f".format(past.issuePrice)}" else "—"}",
                     color = AxeTextMuted,
-                    fontSize = 11.sp
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "Listing Open: ₹${"%,.1f".format(past.listingPrice)}",
+                    text = "Listing: ${if (hasListing) "₹${"%,.1f".format(past.listingPrice)}" else "—"}",
                     color = AxeTextSecondary,
-                    fontSize = 11.sp
+                    fontSize = 10.sp,
+                    modifier = Modifier.weight(1f)
                 )
                 Text(
-                    text = "Current: ₹${"%,.1f".format(past.currentPrice)}",
+                    text = "Current: ${if (hasCurrent) "₹${"%,.1f".format(past.currentPrice)}" else "—"}",
                     color = AxePrimaryCyan,
                     fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
@@ -1100,7 +1123,7 @@ private fun PastListingCard(past: PastIpoItem) {
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "${if (isListingProfit) "+" else ""}${"%.2f".format(past.listingGainPercent)}%",
+                        text = if (hasListing) "${if (isListingProfit) "+" else ""}${"%.2f".format(past.listingGainPercent)}%" else "—",
                         color = listingGainColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
@@ -1115,7 +1138,7 @@ private fun PastListingCard(past: PastIpoItem) {
                         fontWeight = FontWeight.Medium
                     )
                     Text(
-                        text = "${if (isCurProfit) "+" else ""}${"%.2f".format(curGain)}%",
+                        text = if (hasCurrent) "${if (isCurProfit) "+" else ""}${"%.2f".format(curGain)}%" else "—",
                         color = curGainColor,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold

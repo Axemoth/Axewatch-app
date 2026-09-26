@@ -57,10 +57,10 @@ class IpoGmpService {
             "name" to listOf("ipo", "company name", "company", "name")
         )
 
-        private val PERF_COLUMN_ALIASES = listOf(
+        internal val PERF_COLUMN_ALIASES = listOf(
             "name" to listOf("ipo", "company name", "name"),
             "symbol" to listOf("symbol", "ticker"),
-            "listing_date" to listOf("listing date", "listing"),
+            "listing_date" to listOf("listing date", "listing dt"),
             "sub" to listOf("sub", "subscription"),
             "price" to listOf("ipo price", "issue price", "price"),
             "listing_price" to listOf("listing price"),
@@ -198,12 +198,7 @@ class IpoGmpService {
             val total = matchedSub?.total ?: parseNumber(row["sub_x"] ?: "0")
             val finalCloseDate = if (matchedSub?.closeDate?.isNotBlank() == true) matchedSub.closeDate else closeDate
 
-            val priceBand = if (issuePrice > 0) {
-                val lowerBand = (issuePrice * 0.95).toInt()
-                if (lowerBand > 0 && lowerBand < issuePrice.toInt()) "₹$lowerBand - ₹${issuePrice.toInt()}" else "₹${issuePrice.toInt()}"
-            } else {
-                "₹TBA"
-            }
+            val priceBand = if (issuePrice > 0) "₹${issuePrice.toInt()}" else "—"
 
             val ipo = IpoIssue(
                 symbol = symbol,
@@ -248,7 +243,8 @@ class IpoGmpService {
                     estListingPrice = estListingPrice,
                     status = if (mappedStatus == "Active") "Open" else mappedStatus,
                     fireRating = fireRating,
-                    lastUpdated = row["updated"]?.ifBlank { "Live" } ?: "Live"
+                    lastUpdated = row["updated"].orEmpty(),
+                    category = if (isSme) "SME" else "Mainboard"
                 )
             )
         }
@@ -275,9 +271,7 @@ class IpoGmpService {
             val key = normalizeKey(igIpo.companyName)
             var matchedIw = iwIpoMap.remove(key)
             if (matchedIw == null) {
-                val matchKey = iwIpoMap.keys.firstOrNull { k ->
-                    k.length >= 8 && key.length >= 8 && (k.contains(key) || key.contains(k))
-                }
+                val matchKey = uniqueNormalizedMatch(iwIpoMap.keys, key)
                 if (matchKey != null) {
                     matchedIw = iwIpoMap.remove(matchKey)
                 }
@@ -322,9 +316,7 @@ class IpoGmpService {
             val key = normalizeKey(igGmp.companyName)
             var matchedIw = iwGmpMap.remove(key)
             if (matchedIw == null) {
-                val matchKey = iwGmpMap.keys.firstOrNull { k ->
-                    k.length >= 8 && key.length >= 8 && (k.contains(key) || key.contains(k))
-                }
+                val matchKey = uniqueNormalizedMatch(iwGmpMap.keys, key)
                 if (matchKey != null) {
                     matchedIw = iwGmpMap.remove(matchKey)
                 }
@@ -338,7 +330,8 @@ class IpoGmpService {
                         gmpAmount = gmpAmt,
                         gmpPercent = gmpPct,
                         estListingPrice = if (igGmp.issuePrice > 0) igGmp.issuePrice + gmpAmt else igGmp.estListingPrice,
-                        lastUpdated = igGmp.lastUpdated.ifBlank { matchedIw.lastUpdated }
+                        lastUpdated = igGmp.lastUpdated.ifBlank { matchedIw.lastUpdated },
+                        category = if (igGmp.category != "Unknown") igGmp.category else matchedIw.category
                     )
                 )
             } else {
@@ -464,12 +457,7 @@ class IpoGmpService {
         val issueSizeCr = 0.0
         val registrar = "Unknown"
 
-                val priceBand = if (issuePrice > 0) {
-                    val lowerBand = (issuePrice * 0.95).toInt()
-                    if (lowerBand > 0 && lowerBand < issuePrice.toInt()) "₹$lowerBand - ₹${issuePrice.toInt()}" else "₹${issuePrice.toInt()}"
-                } else {
-                    "₹TBA"
-                }
+                val priceBand = if (issuePrice > 0) "₹${issuePrice.toInt()}" else "—"
 
                 val ipo = IpoIssue(
                     symbol = symbol,
@@ -512,7 +500,8 @@ class IpoGmpService {
                     estListingPrice = estListingPrice,
                     status = if (mappedStatus == "Active") "Open" else mappedStatus,
                     fireRating = fireRating,
-                    lastUpdated = row["updated"]?.ifBlank { "Live" } ?: "Live"
+                    lastUpdated = row["updated"].orEmpty(),
+                    category = if (isSme) "SME" else "Mainboard"
                 )
                 allGmps.add(gmpItem)
             }
@@ -627,10 +616,12 @@ class IpoGmpService {
 
         val html = response.body?.string() ?: return emptyList()
         val tables = parseTables(html, PERF_COLUMN_ALIASES)
-        if (tables.isEmpty()) return emptyList()
+        return parseInvestorGainPastRows(tables)
+    }
 
+    internal fun parseInvestorGainPastRows(tables: List<ParsedTable>): List<PastIpoItem> {
         val pastList = mutableListOf<PastIpoItem>()
-        for (table in tables) {
+        for (table in tables.filter { it.colMap.keys.containsAll(listOf("name", "price", "listing_price")) }) {
             for (row in table.rows.take(60)) {
                 val rawName = row["name"] ?: continue
                 val cleanName = cleanCompanyName(rawName)
@@ -654,10 +645,10 @@ class IpoGmpService {
                     0.0
                 }
 
-                val curGainPct = if (issuePx > 0.0 && curPx > 0.0) {
+                val curGainPct = if (curPx > 0.0) {
                     (((curPx - issuePx) / issuePx) * 100.0).roundToOneDecimal()
                 } else {
-                    listingGainPct
+                    0.0
                 }
 
                 pastList.add(
@@ -665,12 +656,13 @@ class IpoGmpService {
                         symbol = sym,
                         companyName = cleanName,
                         issuePrice = issuePx,
-                        listingPrice = if (listingPx > 0.0) listingPx else issuePx,
-                        currentPrice = if (curPx > 0.0) curPx else (if (listingPx > 0.0) listingPx else issuePx),
+                        listingPrice = listingPx,
+                        currentPrice = curPx,
                         listingGainPercent = listingGainPct,
                         currentGainPercent = curGainPct,
                         totalSub = sub,
-                        listingDate = listingDate
+                        listingDate = listingDate,
+                        category = if (rawName.contains("SME", ignoreCase = true)) "SME" else "Mainboard"
                     )
                 )
             }
@@ -703,13 +695,9 @@ class IpoGmpService {
             val issuePx = parseNumber(row["price"] ?: "0")
             if (issuePx <= 0.0) continue
 
-            val gmp = parseNumber(row["gmp"] ?: "0")
-            var listingPx = parseNumber(row["listing_price"] ?: "0")
-            if (listingPx <= 0.0) {
-                listingPx = issuePx + gmp
-            }
+            val listingPx = parseNumber(row["listing_price"] ?: "0")
 
-            val gainPct = if (issuePx > 0) {
+            val gainPct = if (listingPx > 0) {
                 (((listingPx - issuePx) / issuePx) * 100.0).roundToOneDecimal()
             } else {
                 0.0
@@ -721,11 +709,12 @@ class IpoGmpService {
                     companyName = cleanName,
                     issuePrice = issuePx,
                     listingPrice = listingPx,
-                    currentPrice = listingPx,
+                    currentPrice = 0.0,
                     listingGainPercent = gainPct,
-                    currentGainPercent = gainPct,
+                    currentGainPercent = 0.0,
                     totalSub = 0.0,
-                    listingDate = ""
+                    listingDate = "",
+                    category = "Unknown"
                 )
             )
         }
@@ -733,7 +722,7 @@ class IpoGmpService {
         return pastList
     }
 
-    private fun parseTables(html: String, aliases: List<Pair<String, List<String>>>): List<ParsedTable> {
+    internal fun parseTables(html: String, aliases: List<Pair<String, List<String>>>): List<ParsedTable> {
         val tablePattern = Pattern.compile("<table[^>]*>(.*?)</table>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val rowPattern = Pattern.compile("<tr[^>]*>(.*?)</tr>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
         val cellPattern = Pattern.compile("<t[hd][^>]*>(.*?)</t[hd]>", Pattern.DOTALL or Pattern.CASE_INSENSITIVE)
@@ -815,18 +804,19 @@ class IpoGmpService {
             .replace(Regex("\\s+"), " ")
             .trim()
 
-        for ((canon, aliasList) in aliases) {
-            for (a in aliasList) {
-                val aClean = a.lowercase()
-                    .replace(Regex("[^a-z0-9% ]"), " ")
-                    .replace(Regex("\\s+"), " ")
-                    .trim()
-                if (hClean == aClean || hClean.startsWith("$aClean ") || hClean.endsWith(" $aClean") || hClean.contains(" $aClean ")) {
-                    return canon
-                }
+        val candidates = aliases.flatMap { (canon, names) ->
+            names.map { alias ->
+                canon to alias.lowercase().replace(Regex("[^a-z0-9% ]"), " ")
+                    .replace(Regex("\\s+"), " ").trim()
             }
-        }
-        return null
+        }.filter { it.second.isNotEmpty() }
+        // Exact, specific headers win before generic words such as "Price".
+        // Otherwise Listing Price and Closing Price (LTP) both map to issue price.
+        candidates.firstOrNull { it.second == hClean }?.let { return it.first }
+        return candidates.sortedByDescending { it.second.length }
+            .firstOrNull { (_, alias) ->
+                hClean.startsWith("$alias ") || hClean.endsWith(" $alias") || hClean.contains(" $alias ")
+            }?.first
     }
 
     private fun cleanHtml(raw: String): String {
@@ -972,6 +962,13 @@ class IpoGmpService {
             .replace("ipo", "")
     }
 
+    /** Never assign one source's values to the first of several partial matches. */
+    internal fun uniqueNormalizedMatch(keys: Set<String>, wanted: String): String? = keys
+        .filter { key ->
+            key.length >= 10 && wanted.length >= 10 &&
+                (key.contains(wanted) || wanted.contains(key))
+        }.singleOrNull()
+
     private fun findSubscription(companyName: String, subMap: Map<String, LiveSubInfo>): LiveSubInfo? {
         val norm = normalizeKey(companyName)
         if (norm.isEmpty()) return null
@@ -979,12 +976,8 @@ class IpoGmpService {
         // Guarded substring fallback (>=10 shared chars): unguarded
         // contains() collides ("Hero Motors" vs "Motors"), attributing one
         // IPO's live subscription to another.
-        for ((k, v) in subMap) {
-            if (k.length >= 10 && norm.length >= 10 && (norm.contains(k) || k.contains(norm))) {
-                return v
-            }
-        }
-        return null
+        val key = uniqueNormalizedMatch(subMap.keys, norm) ?: return null
+        return subMap[key]
     }
 
     /** Test seam for the pure name cleaner (glued-status-suffix stripping). */

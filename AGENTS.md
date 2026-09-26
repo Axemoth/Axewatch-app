@@ -53,9 +53,13 @@ History of removed fabrications (do not reintroduce):
 - **Automated**: MUFG Intime (`SearchOnPan` + AES-token flow, cookie-warmed
   session via `JavaNetCookieJar` — REQUIRED, calls without it misbehave) and
   KFintech (`?type=pan`, PAN in `reqparam` **header**, empty `client_id`
-  header; 200 = records / 400 = no record).
-- **Manual handoff only** (captcha/bot-walled, no automation exists):
-  Bigshare, BSE, NSE — deep links + registrar chips, never fake checks.
+  header; 200 = records / 400 = no record). Maashitla's official site
+  (`api.maashitla.com/api`) has a public-issue company list and PAN search;
+  match the company uniquely before querying. Its 200 result uses
+  `shares_applied` and misspelled `shares_alloted`; 404 means no record.
+- **Manual handoff**: Bigshare requires a server CAPTCHA. BSE/NSE and
+  other unsupported registrar portals require an official-site check; never
+  claim they all require CAPTCHA. Maashitla is automated, not manual.
 - **Statuses**: `ALLOTTED` / `NOT_ALLOTTED` / `NOT_APPLIED` / `RESULTS_NOT_OUT`
   / `LOOKUP_FAILED` (transport trouble — must never render as "Not Allotted").
   `AllotmentRecordEntity.statusLabel` + `isLookupFailed` encode the vocabulary;
@@ -64,9 +68,10 @@ History of removed fabrications (do not reintroduce):
   (lowercase, `&`→`and`, strip corp suffixes + glued status words). Matching
   needs exact-canon or a **≥10-char** substring (`ipoNamesMatch`,
   `findBestCompanyMatch`) — short names (ARCIL, MANIKAPLA) must never collide.
-- **Declared beats lagging status**: a directory allotment date (or Closed/
-  Listed status) forces the registrars to be queried even when the tracker
-  still shows "Active" — the `allotmentDeclared` bypass.
+- **Declared beats lagging status**: a scheduled allotment date at or before
+  today, or an Allotted/Listed tracker status, allows a negative registrar
+  outcome even if a tracker still shows Active. Closed alone and presence in
+  a registrar dropdown do not prove publication.
 - **Tolerant share counts**: `parseShareCount` handles ints, "1,234"
   strings, and decimals (org.json `optInt` returns 0 for string forms and
   once dropped real allotments); same tolerance in the MUFG XML parser.
@@ -78,11 +83,9 @@ History of removed fabrications (do not reintroduce):
   ("Tata" keeps its "a"; "NSE" is a real IPO name, never cleans to "").
   Reason: uncleaned names missed the directory join, so KFin IPOs were probed
   and stored against MUFG.
-- **KFin outage is real and persistent**: their gateway
-  (`...execute-api.../prod/api/query?type=pan`) returns HTTP 502 for every
-  request right now — the live portal is broken too. On KFin transport failure
-  the app now falls through to MUFG instead of returning, and records are
-  attributed to the DIRECTORY registrar, never the probing source.
+- **Registrar failures are not negative outcomes**: a known KFintech,
+  MUFG, or Maashitla issue must not be answered by probing another registrar.
+  A 429, 5xx, malformed response, or network failure is `LOOKUP_FAILED`.
 - **MUFG exposes only ~5 rotating companies** via `GetDetails`; older issues
   are reachable only through remembered `mufg_ids` (live list + remembered IDs
   merge into append-only SharedPreferences so past IPOs stay checkable).
@@ -115,6 +118,8 @@ History of removed fabrications (do not reintroduce):
   complete directory refreshes retain the 24-hour TTL.
 - A registrar company dropdown proves attribution only. Do not report
   `NOT_ALLOTTED` or `NOT_APPLIED` before a declared allotment date/status.
+  A date due alone also must not produce a notification title claiming
+  results are out; manual nudges say "Check allotment".
   Malformed responses, empty tokens, throttles, and transport errors are
   `LOOKUP_FAILED`, never negative application outcomes. A known KFintech issue
   must not be answered by probing MUFG (or vice versa). KFintech 429/503 must
@@ -137,6 +142,24 @@ History of removed fabrications (do not reintroduce):
   fractions. IPOWatch GMP table positions are layout, not contract:
   `pickGmpTables`/`pickPastTable` select by column shape. ipoindex.in has
   no server-rendered tables, so it is deliberately NOT a source.
+- **Past performance header mapping**: InvestorGain currently labels columns
+  `Price`, `Listing Price`, and `Closing Price (LTP)`. Match exact normalized
+  headers before substring aliases: a generic `price` match once captured
+  both specific columns, making every card display the issue price three
+  times. `Listing Dt` carries the date (`25-Sep-26`), and `parseLooseDate`
+  must honor that two-digit year. Test with at least two rows having distinct
+  issue/listing/current prices. If a source leaves a price blank, store `0`
+  and render `—`; never backfill it from issue price or GMP.
+- **GMP board**: source rows retain their Mainboard/SME category. Show the
+  tag beside status, put Open then Upcoming ahead of Closed/Listed, and sort
+  each stage by measured GMP descending. Never sort only by a stale
+  last-updated string. Keep cards compact and the IPO subscription breakdown
+  behind `More Details`. Cross-source name joins and subscription joins may
+  use only an exact normalized key or one unique ≥10-character partial match;
+  never take the first of several candidates.
+- **Price/subscription honesty**: a single published issue price is not a
+  price band; do not invent a 95% lower bound. A combined SME NII/HNI value
+  is not separate sHNI and bHNI values. Unknown splits show `—`.
 - Seeds are **empty/zeroed** until live data lands; offline = empty states.
 - Trade ideas: on-device rule engine (`TechnicalAnalysisEngine`) over real
   Yahoo bars. The Signals tab **auto-runs once (cached)** on entry
@@ -155,14 +178,14 @@ History of removed fabrications (do not reintroduce):
   this means a throttled 50-quote refresh (Yahoo 429 risk) — a future work
   item, not a quick edit. Do not present unquoted rows as live; do not
   "fix" by inventing fresher numbers.
-- **Allotment UX rules**: picker sections are Results declared → Open now →
+- **Allotment UX rules**: picker sections are Allotment due/results → Open now →
   Upcoming, recent-first (`ipoSection`/`ipoRecencyKey`/`parseLooseDate`,
   all unit-tested); default selection is the most recent declared issue;
   Check button shows a spinner and disables while busy; LOOKUP_FAILED rows
   carry a one-tap retry resolved via the vault (records alone never
   re-identify a PAN).
 
-## 4. Build & test (verified: APK + 45/45 tests green)
+## 4. Build & test
 
 - Toolchain: JDK 17 + Gradle 9.3.1 + SDK `platforms;android-36` +
   `build-tools;36.0.0`. Set `JAVA_HOME`, `ANDROID_HOME`/`ANDROID_SDK_ROOT`.
