@@ -37,7 +37,6 @@ class AllotWatcherWorker(
         const val CHANNEL_ID = "allot_results"
         const val EXTRA_OPEN_TAB = "open_tab"
         const val TAB_ALLOTMENT = "allotment"
-        private const val SUMMARY_NOT_ALLOTTED_ID = 1002
         private const val SUMMARY_MANUAL_ID = 1003
 
         private fun notifiedPrefs(context: Context) =
@@ -87,7 +86,8 @@ class AllotWatcherWorker(
             if (key in notified) continue
             val text = when (rec.status) {
                 "ALLOTTED" -> AllotNotifyText.allotted(rec.ipoName, pan.holderName, pan.maskedPan, rec.sharesAllotted)
-                "NOT_ALLOTTED" -> AllotNotifyText.notAllottedSummary(1)
+                "NOT_ALLOTTED" -> AllotNotifyText.notAllotted(rec.ipoName, pan.holderName, pan.maskedPan)
+                "NOT_APPLIED" -> AllotNotifyText.notApplied(rec.ipoName, pan.holderName, pan.maskedPan)
                 else -> continue
             }
             if (postNotification(key.hashCode(), text.first, text.second)) {
@@ -110,7 +110,7 @@ class AllotWatcherWorker(
         // mask, so masked-string equality alone would re-check + re-notify
         // them forever.
         val decisiveRecords = records
-            .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" }
+            .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" || it.status == "NOT_APPLIED" }
         fun isDecided(symbol: String, vaultMasked: String): Boolean =
             decisiveRecords.any { it.ipoSymbol == symbol && maskMatches(vaultMasked, it.maskedPan) }
         val todayKey = todayLooseDateKey()
@@ -137,8 +137,6 @@ class AllotWatcherWorker(
         var changed = false
 
         // Declared + automated: check the saved family PANs (existing pacing).
-        val freshNotAllotted = mutableListOf<Triple<String, String, String>>()
-        val notAllottedKeys = mutableSetOf<String>()
         for (issue in due.auto) {
             val undecided = pans.filter { pan ->
                 val key = allotNotifyKey(issue.symbol, pan.maskedPan)
@@ -174,23 +172,20 @@ class AllotWatcherWorker(
                             writeNotified(context, notified)
                         }
                     }
-                    "NOT_ALLOTTED" -> {
-                        freshNotAllotted.add(Triple(rec.ipoName.ifBlank { issue.name }, label, rec.maskedPan))
-                        notAllottedKeys.add(key)
+                    "NOT_ALLOTTED", "NOT_APPLIED" -> {
+                        val text = if (rec.status == "NOT_ALLOTTED")
+                            AllotNotifyText.notAllotted(rec.ipoName.ifBlank { issue.name }, label, rec.maskedPan)
+                        else AllotNotifyText.notApplied(rec.ipoName.ifBlank { issue.name }, label, rec.maskedPan)
+                        if (postNotification(key.hashCode(), text.first, text.second)) {
+                            notified.add(key); changed = true
+                            writeNotified(context, notified)
+                        }
                     }
-                    // RESULTS_NOT_OUT / LOOKUP_FAILED / NOT_APPLIED / manual:
+                    // RESULTS_NOT_OUT / LOOKUP_FAILED / manual:
                     // no notify, no mark — a later run retries naturally.
                 }
             }
         }
-        if (freshNotAllotted.isNotEmpty()) {
-            val (t, b) = AllotNotifyText.notAllottedSummary(freshNotAllotted.size)
-            if (postNotification(SUMMARY_NOT_ALLOTTED_ID, t, b)) {
-                notified.addAll(notAllottedKeys); changed = true
-                writeNotified(context, notified)
-            }
-        }
-
         // Declared + manual portal: nudge once per issue, never queried.
         val nudges = due.manual.filter { issue ->
             val key = allotNotifyKey(issue.symbol, "MANUAL")

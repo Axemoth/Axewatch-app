@@ -26,7 +26,8 @@ data class WatchedIssue(
     val name: String,
     val registrar: String,
     val allotmentDate: String = "",
-    val status: String = ""
+    val status: String = "",
+    val closeDate: String = ""
 )
 
 data class DueSet(
@@ -45,7 +46,7 @@ fun pendingAllotNotifications(
     pans: List<PanVaultEntity>,
     notified: Set<String>
 ): List<Pair<AllotmentRecordEntity, PanVaultEntity>> = records
-    .filter { it.isAllotted || it.isNotAllotted }
+    .filter { it.isAllotted || it.isNotAllotted || it.status == "NOT_APPLIED" }
     .sortedByDescending { it.checkedAt }
     .mapNotNull { record ->
         // A display mask is not a unique identity: never guess a holder.
@@ -102,6 +103,11 @@ fun computeDueIssues(
     val manual = mutableListOf<WatchedIssue>()
     for (issue in snapshot) {
         if (issue.symbol.isBlank()) continue
+        val closeKey = parseLooseDate(issue.closeDate, (todayKey / 10000).toInt())
+        if (closeKey > 0) {
+            val closeAge = daysBetweenDateKeys(closeKey, todayKey)
+            if (closeAge < 0 || closeAge > OLDER_CLOSE_AGE_DAYS) continue
+        }
         if (issue.symbol in decidedSymbols || issue.symbol in notifiedSymbols) continue
         if (!isDeclaredOut(issue, dir, todayKey)) continue
         // Fresh directory beats a possibly-stale snapshot registrar: an
@@ -123,6 +129,12 @@ object AllotNotifyText {
     fun notAllottedSummary(count: Int): Pair<String, String> =
         "IPO results declared" to
             "$count saved application${if (count == 1) " was" else "s were"} not allotted. Tap to review."
+
+    fun notAllotted(issueName: String, holderLabel: String, maskedPan: String): Pair<String, String> =
+        "IPO not allotted: $issueName" to "$holderLabel ($maskedPan) applied but received no shares. Tap to view."
+
+    fun notApplied(issueName: String, holderLabel: String, maskedPan: String): Pair<String, String> =
+        "No IPO application: $issueName" to "$holderLabel ($maskedPan) has no application record. Tap to verify."
 
     fun manualNudge(issueName: String, registrar: String): Pair<String, String> =
         "Check allotment: $issueName" to

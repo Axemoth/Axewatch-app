@@ -39,9 +39,9 @@ class IpoScreenshotTest {
         compose.setContent {
             AxewatchTheme { IpoScreen(listOf(issue), listOf(gmp), listOf(past)) }
         }
-        compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-issues.png")
-        compose.onNodeWithText("GMP Board").performClick()
-        compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-gmp.png")
+        compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-current.png")
+        compose.onNodeWithText("2.5x total").assertExists()
+        compose.onNodeWithText("+₹95").assertExists()
         compose.onNodeWithText("Past Listings").performClick()
         compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-past.png")
     }

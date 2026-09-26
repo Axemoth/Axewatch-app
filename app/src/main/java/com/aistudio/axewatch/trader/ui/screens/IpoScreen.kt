@@ -57,14 +57,10 @@ import com.aistudio.axewatch.trader.data.model.PastIpoItem
 import com.aistudio.axewatch.trader.data.model.RegistrarLink
 import com.aistudio.axewatch.trader.data.model.RegistrarSourceHealth
 import com.aistudio.axewatch.trader.data.model.findMatchingRegistrarLink
-import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
+import com.aistudio.axewatch.trader.data.model.currentIpoRows
+import com.aistudio.axewatch.trader.data.model.isRecentAllotmentIssue
 import com.aistudio.axewatch.trader.data.model.isBiddingNotStarted
 import com.aistudio.axewatch.trader.data.model.parseLooseDate
-import com.aistudio.axewatch.trader.data.model.getAllotmentBadge
-import com.aistudio.axewatch.trader.data.model.isAllotmentDayOrAfter
-import com.aistudio.axewatch.trader.data.model.isAllotmentOut
-import com.aistudio.axewatch.trader.data.model.sortGmpBoard
-import com.aistudio.axewatch.trader.data.model.todayLooseDateKey
 import com.aistudio.axewatch.trader.data.remote.DirectoryEntry
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
 import com.aistudio.axewatch.trader.ui.dialogs.IpoCalculatorDialog
@@ -114,33 +110,15 @@ fun IpoScreen(
     }
     var selectedIpoForCheck by remember { mutableStateOf("") }
 
-    var ipoSubTab by remember { mutableIntStateOf(0) } // 0: Issues, 1: Live GMP, 2: Past Listings
+    var ipoSubTab by remember { mutableIntStateOf(0) } // 0: Current issues, 1: Past Listings
     var searchQuery by remember { mutableStateOf("") }
     var calculatorIpo by remember { mutableStateOf<IpoIssue?>(null) }
 
-    val todayKey = remember { todayLooseDateKey() }
-    val allotmentActiveCount = remember(ipos, regDir, todayKey) {
-        ipos.count { it.isAllotmentOut(todayKey, regDir) || it.isAllotmentDayOrAfter(todayKey, regDir) }
-    }
-
-    // Descending order from latest to oldest
-    val filteredIpos = remember(ipos, searchQuery) {
-        val matches = if (searchQuery.isBlank()) ipos else ipos.filter {
-            it.companyName.contains(searchQuery, ignoreCase = true) ||
-            it.symbol.contains(searchQuery, ignoreCase = true)
+    val currentRows = remember(ipos, gmps, searchQuery) {
+        currentIpoRows(ipos, gmps).filter {
+            searchQuery.isBlank() || it.issue.companyName.contains(searchQuery, ignoreCase = true) ||
+                it.issue.symbol.contains(searchQuery, ignoreCase = true)
         }
-        matches.filter { it.symbol.isNotBlank() }
-            .distinctBy { it.symbol }
-            .sortedWith(compareByDescending { ipoRecencyKey(it) })
-    }
-
-    val filteredGmps = remember(gmps, ipos, searchQuery) {
-        val matches = if (searchQuery.isBlank()) gmps else gmps.filter {
-            it.companyName.contains(searchQuery, ignoreCase = true) ||
-            it.symbol.contains(searchQuery, ignoreCase = true)
-        }
-        sortGmpBoard(matches.filter { it.companyName.isNotBlank() }
-            .distinctBy { IpoAllotmentService.canonIpoName(it.companyName) }, ipos)
     }
 
     val filteredPast = remember(pastIpos, searchQuery) {
@@ -209,7 +187,7 @@ fun IpoScreen(
         }
 
         if (mainSection == 0) {
-            // Sub-Tabs Header: Active Issues, GMP Board, Past Listings
+            // Subscription and GMP share each current-issue card.
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -218,7 +196,7 @@ fun IpoScreen(
                     .background(AxeDarkSurface)
                     .padding(2.dp)
             ) {
-                val tabs = listOf("Active Issues", "GMP Board", "Past Listings")
+                val tabs = listOf("Open & Forthcoming", "Past Listings")
                 tabs.forEachIndexed { index, title ->
                     val selected = ipoSubTab == index
                     Box(
@@ -272,71 +250,31 @@ fun IpoScreen(
                 when (ipoSubTab) {
                     0 -> {
                         // Active & Forthcoming Issues (Descending Order)
-                        if (allotmentActiveCount > 0) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(AxeEmeraldGreen.copy(alpha = 0.12f))
-                                        .border(1.dp, AxeEmeraldGreen.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
-                                        .clickable { mainSection = 1 }
-                                        .padding(12.dp)
-                                ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.weight(1f, fill = false),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = "\u2713",
-                                                color = AxeEmeraldGreen,
-                                                fontSize = 14.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                            Spacer(modifier = Modifier.width(8.dp))
-                                            Column {
-                                                Text(
-                                                    text = "Allotment status & schedule ($allotmentActiveCount)",
-                                                    color = AxeEmeraldGreen,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                                Text(
-                                                    text = "Allotment dates due or results reported by trackers",
-                                                    color = AxeTextSecondary,
-                                                    fontSize = 10.sp
-                                                )
-                                            }
-                                        }
-                                        Text(
-                                            text = "Check Now \u2192",
-                                            color = AxePrimaryCyan,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                        for (stage in 0..1) {
+                            val stageRows = currentRows.filter { it.stage == stage }
+                            item(key = "stage_$stage") {
+                                Text(
+                                    if (stage == 0) "OPEN · ${stageRows.size}" else "FORTHCOMING · ${stageRows.size}",
+                                    color = AxeTextSecondary, fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(top = 10.dp, bottom = 2.dp)
+                                )
+                            }
+                            items(stageRows, key = { "current_${it.issue.symbol}_${it.issue.companyName}" }) { row ->
+                                val ipo = row.issue
+                                IpoIssueCard(
+                                    ipo = ipo,
+                                    showAllotmentAction = row.stage == 0 && ipos.any { it.symbol == ipo.symbol },
+                                    registrarLinks = registrarLinks,
+                                    onCalculateGain = { calculatorIpo = ipo },
+                                    onCheckAllotment = {
+                                        selectedIpoForCheck = ipo.symbol
+                                        mainSection = 1
                                     }
-                                }
+                                )
                             }
                         }
-
-                        items(filteredIpos, key = { it.symbol }) { ipo ->
-                            IpoIssueCard(
-                                ipo = ipo,
-                                registrarLinks = registrarLinks,
-                                regDir = regDir,
-                                onCalculateGain = { calculatorIpo = ipo },
-                                onCheckAllotment = {
-                                    selectedIpoForCheck = ipo.symbol
-                                    mainSection = 1
-                                }
-                            )
-                        }
-                        if (filteredIpos.isEmpty()) {
+                        if (currentRows.isEmpty()) {
                             item {
                                 Box(
                                     modifier = Modifier
@@ -345,7 +283,7 @@ fun IpoScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = "No active IPOs right now — pull to refresh",
+                                        text = "No open or forthcoming IPOs loaded — pull to refresh",
                                         color = AxeTextMuted,
                                         fontSize = 13.sp
                                     )
@@ -354,55 +292,6 @@ fun IpoScreen(
                         }
                     }
                     1 -> {
-                        // Live GMP Board (Descending Order)
-                        items(filteredGmps, key = { it.companyName }) { gmp ->
-                            GmpBoardCard(
-                                gmp = gmp,
-                                onClick = {
-                                    val match = ipos.find { it.symbol == gmp.symbol } ?: IpoIssue(
-                                        symbol = gmp.symbol,
-                                        companyName = gmp.companyName,
-                                        category = gmp.category,
-                                        priceBand = "₹${gmp.issuePrice.toInt()}",
-                                        issuePrice = gmp.issuePrice,
-                                        lotSize = 0,
-                                        issueSizeCr = 0.0,
-                                        issueOpenDate = "—",
-                                        issueCloseDate = "—",
-                                        status = gmp.status,
-                                        totalSub = 0.0,
-                                        qibSub = 0.0,
-                                        niiSub = 0.0,
-                                        shniSub = 0.0,
-                                        bhniSub = 0.0,
-                                        riiSub = 0.0,
-                                        gmpAmount = gmp.gmpAmount,
-                                        gmpPercent = gmp.gmpPercent,
-                                        estListingPrice = gmp.estListingPrice,
-                                        registrar = "Unknown"
-                                    )
-                                    calculatorIpo = match
-                                }
-                            )
-                        }
-                        if (filteredGmps.isEmpty()) {
-                            item {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(32.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Text(
-                                        text = "No GMP rows match your search",
-                                        color = AxeTextMuted,
-                                        fontSize = 13.sp
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    2 -> {
                         // Past Listings (Descending Order)
                         items(filteredPast, key = { it.companyName }) { past ->
                             PastListingCard(past = past)
@@ -429,7 +318,7 @@ fun IpoScreen(
         } else {
             // Direct Allotment Checker
             AllotmentScreen(
-                ipos = ipos,
+                ipos = ipos.filter { isRecentAllotmentIssue(it) },
                 savedPans = savedPans,
                 records = records,
                 healthList = healthList,
@@ -455,8 +344,8 @@ fun IpoScreen(
 @Composable
 private fun IpoIssueCard(
     ipo: IpoIssue,
+    showAllotmentAction: Boolean = true,
     registrarLinks: List<RegistrarLink> = emptyList(),
-    regDir: Map<String, DirectoryEntry> = emptyMap(),
     onCalculateGain: () -> Unit = {},
     onCheckAllotment: () -> Unit = {}
 ) {
@@ -464,8 +353,6 @@ private fun IpoIssueCard(
     var detailsExpanded by rememberSaveable(ipo.symbol) { mutableStateOf(false) }
     val isSme = ipo.category == "SME"
     val isPreBidding = ipo.isBiddingNotStarted()
-    val todayKey = remember { todayLooseDateKey() }
-    val allotBadge = remember(ipo, todayKey, regDir) { ipo.getAllotmentBadge(todayKey, regDir) }
     val statusColor = when {
         isPreBidding -> AxePrimaryCyan
         ipo.status == "Active" -> AxeEmeraldGreen
@@ -483,7 +370,7 @@ private fun IpoIssueCard(
             .padding(14.dp)
     ) {
         Column {
-            // Header Row: Title, SME badge, Allotment Badge, Status
+            // Header Row: Title, SME/Mainboard, Status
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -516,28 +403,6 @@ private fun IpoIssueCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (allotBadge != null) {
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(if (allotBadge.isGreenCheck) AxeGreenSubtle else AxePrimaryCyan.copy(alpha = 0.15f))
-                                .border(
-                                    1.dp,
-                                    if (allotBadge.isGreenCheck) AxeEmeraldGreen.copy(alpha = 0.5f) else AxePrimaryCyan.copy(alpha = 0.3f),
-                                    RoundedCornerShape(6.dp)
-                                )
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = allotBadge.label,
-                                color = if (allotBadge.isGreenCheck) AxeEmeraldGreen else AxePrimaryCyan,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(6.dp))
-                    }
-
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
@@ -556,12 +421,40 @@ private fun IpoIssueCard(
 
             Spacer(modifier = Modifier.height(6.dp))
             Text(
-                text = "${ipo.priceBand} · Closes ${ipo.issueCloseDate} · Sub ${if (ipo.totalSub > 0) "${ipo.totalSub}x" else "—"}",
-                color = AxeTextSecondary,
-                fontSize = 11.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                text = "${ipo.priceBand} · ${if (isPreBidding) "Opens ${ipo.issueOpenDate.ifBlank { "TBA" }}" else "Closes ${ipo.issueCloseDate.ifBlank { "TBA" }}"}",
+                color = AxeTextSecondary, fontSize = 11.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis
             )
+            Spacer(modifier = Modifier.height(8.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("SUBSCRIPTION", color = AxeTextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (isPreBidding) "Not open" else if (ipo.totalSub > 0) "${ipo.totalSub}x total" else "—",
+                        color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("GMP", color = AxeTextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text(
+                        if (ipo.gmpAmount != 0.0) "${if (ipo.gmpAmount > 0) "+" else ""}₹${ipo.gmpAmount.toInt()}" else "—",
+                        color = if (ipo.gmpAmount > 0) AxeEmeraldGreen else AxeTextPrimary,
+                        fontSize = 13.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            if (!isPreBidding) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    SubscriptionItem("QIB", if (ipo.qibSub > 0) "${ipo.qibSub}x" else "—")
+                    SubscriptionItem("HNI", if (ipo.niiSub > 0) "${ipo.niiSub}x" else "—")
+                    SubscriptionItem("Retail", if (ipo.riiSub > 0) "${ipo.riiSub}x" else "—")
+                }
+            }
 
             if (detailsExpanded) {
             Spacer(modifier = Modifier.height(8.dp))
@@ -753,47 +646,16 @@ private fun IpoIssueCard(
                 }
             }
             Text(
+                text = "Estimated listing: ${if (ipo.estListingPrice > 0) "₹${ipo.estListingPrice.toInt()}" else "—"}",
+                color = AxePrimaryCyan, fontSize = 11.sp,
+                modifier = Modifier.padding(top = 8.dp)
+            )
+            Text(
                 text = "Hide details",
                 color = AxePrimaryCyan,
                 fontSize = 11.sp,
                 modifier = Modifier.clickable { detailsExpanded = false }.padding(top = 8.dp)
             )
-            }
-
-            // Expected GMP & Listing Gain Calculator trigger
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    if (ipo.gmpAmount > 0) {
-                        Text(
-                            text = "Current GMP: +₹${ipo.gmpAmount.toInt()} (+${ipo.gmpPercent}%)",
-                            color = AxeEmeraldGreen,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            text = "Est. Listing: ${if (ipo.estListingPrice > 0) "₹${ipo.estListingPrice.toInt()}" else "—"}",
-                            color = AxePrimaryCyan,
-                            fontSize = 11.sp
-                        )
-                    } else {
-                        Text(
-                            text = "Current GMP: ₹0 (TBA)",
-                            color = AxeTextMuted,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "Est. Listing: —",
-                            color = AxeTextMuted,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -804,7 +666,7 @@ private fun IpoIssueCard(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                if (showAllotmentAction) Box(
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(8.dp))
@@ -824,7 +686,7 @@ private fun IpoIssueCard(
                         )
                         Spacer(modifier = Modifier.width(4.dp))
                         Text(
-                            text = if (allotBadge?.isGreenCheck == true) "Check Allotment \u2713" else "Check Allotment",
+                            text = "Check Allotment",
                             color = AxeEmeraldGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold

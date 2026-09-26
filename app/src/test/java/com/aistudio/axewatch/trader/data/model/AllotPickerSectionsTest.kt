@@ -70,6 +70,16 @@ class AllotPickerSectionsTest {
     }
 
     @Test
+    fun `allotment list has open and last thirty days only`() {
+        val now = cal20260922()
+        assertTrue(isRecentAllotmentIssue(issue("Active", open = "21 Sep 2026", close = "25 Sep 2026"), now))
+        assertTrue(isRecentAllotmentIssue(issue("Closed", close = "23 Aug 2026"), now))
+        assertTrue(!isRecentAllotmentIssue(issue("Closed", close = "22 Aug 2026"), now))
+        assertTrue(!isRecentAllotmentIssue(issue("Forthcoming", open = "25 Sep 2026"), now))
+        assertTrue(!isRecentAllotmentIssue(issue("Active", open = "25 Sep 2026"), now))
+    }
+
+    @Test
     fun `registrar counts normalize tracker free text`() {
         val ipos = listOf(
             issue("Active", registrar = "MUFG Intime India"),

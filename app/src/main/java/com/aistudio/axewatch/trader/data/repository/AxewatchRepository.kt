@@ -1109,6 +1109,7 @@ class AxewatchRepository(
                         .put("n", i.companyName)
                         .put("r", i.registrar)
                         .put("a", i.allotmentDate)
+                        .put("c", i.issueCloseDate)
                         .put("t", i.status)
                 )
             }
@@ -1132,7 +1133,8 @@ class AxewatchRepository(
                         name = o.optString("n"),
                         registrar = o.optString("r"),
                         allotmentDate = o.optString("a"),
-                        status = o.optString("t")
+                        status = o.optString("t"),
+                        closeDate = o.optString("c")
                     )
                 )
             }

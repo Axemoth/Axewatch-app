@@ -21,6 +21,7 @@ class AllotWatcherTest {
         assertTrue(pendingAllotNotifications(records, listOf(pan), setOf(allotNotifyKey("ACME", pan.maskedPan))).isEmpty())
         val collision = pan.copy(panNumber = "ABZZZ9999F")
         assertTrue(pendingAllotNotifications(records, listOf(pan, collision), emptySet()).isEmpty())
+        assertEquals(1, pendingAllotNotifications(listOf(record.copy(status = "NOT_APPLIED")), listOf(pan), emptySet()).size)
     }
 
     private fun issue(
@@ -93,6 +94,17 @@ class AllotWatcherTest {
     }
 
     @Test
+    fun `watcher ignores issues older than thirty days`() {
+        val due = computeDueIssues(
+            listOf(
+                issue("RECENT", date = "22 Sep 2026").copy(closeDate = "23 Aug 2026"),
+                issue("OLD", date = "22 Sep 2026").copy(closeDate = "22 Aug 2026")
+            ), todayKey = 20260922L
+        )
+        assertEquals(listOf("RECENT"), due.auto.map { it.symbol })
+    }
+
+    @Test
     fun `auto checkable covers registrar name variants`() {
         assertTrue(registrarAutoCheckable("mufg"))
         assertTrue(registrarAutoCheckable("MUFG Intime"))
@@ -114,5 +126,6 @@ class AllotWatcherTest {
         assertTrue(body.contains("Father") && body.contains("AB*****F") && body.contains("2 shares"))
         val (t2, _) = AllotNotifyText.manualNudge("Lumino", "Bigshare")
         assertTrue(t2.contains("Lumino"))
+        assertTrue(AllotNotifyText.notApplied("Lumino", "Father", "AB*****F").second.contains("no application record"))
     }
 }

@@ -139,7 +139,7 @@ fun AllotmentScreen(
             selectedIpoSymbol = initialSelectedSymbol
         } else if (selectedIpoSymbol.isBlank() || ipos.none { it.symbol == selectedIpoSymbol }) {
             selectedIpoSymbol = ipos
-                .sortedWith(compareBy({ ipoSection(it) }, { -ipoRecencyKey(it) }))
+                .sortedWith(compareBy({ allotPickerSection(it) }, { -ipoRecencyKey(it) }))
                 .firstOrNull()?.symbol ?: ""
         }
     }
@@ -175,14 +175,15 @@ fun AllotmentScreen(
     // dashboard's decided-keys rule.
     val decidedSymbols = remember(records) {
         records
-            .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" }
+            .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" || it.status == "NOT_APPLIED" }
             .map { it.ipoSymbol }
             .toSet()
     }
     val regCounts = remember(ipos) { registrarCounts(ipos) }
-    val featuredAllotmentIpos = remember(ipos, regDir, todayKey) {
+    val featuredAllotmentIpos = remember(ipos, regDir, todayKey, decidedSymbols) {
         ipos.filter { issue ->
-            issue.isAllotmentOut(todayKey, regDir) || issue.isAllotmentDayOrAfter(todayKey, regDir)
+            issue.symbol in decidedSymbols || issue.isAllotmentOut(todayKey, regDir) ||
+                issue.isAllotmentDayOrAfter(todayKey, regDir)
         }.sortedWith(compareByDescending { ipoRecencyKey(it) })
     }
 
@@ -223,7 +224,7 @@ fun AllotmentScreen(
                         letterSpacing = 1.sp
                     )
                     Text(
-                        text = if (alertsEnabled) "On — background check ~6h when results declare"
+                        text = if (alertsEnabled) "On — checks after refresh and about hourly in background"
                         else "Off — enable for background result checks",
                         color = AxeTextMuted,
                         fontSize = 10.sp
@@ -317,7 +318,7 @@ fun AllotmentScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "RESULTS OUT & ALLOTMENT TODAY (${featuredAllotmentIpos.size})",
+                            text = "ALLOTMENT DUE / RESULTS (${featuredAllotmentIpos.size})",
                             color = AxeEmeraldGreen,
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
@@ -337,7 +338,10 @@ fun AllotmentScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         items(featuredAllotmentIpos, key = { "feat_${it.symbol}" }) { ipo ->
-                            val badge = ipo.getAllotmentBadge(todayKey, regDir)
+                            val badge = ipo.getAllotmentBadge(todayKey, regDir).let {
+                                if (ipo.symbol in decidedSymbols) it.copy(label = "Result on file", isGreenCheck = true)
+                                else it
+                            }
                             val isSelected = ipo.symbol == selectedIpoSymbol
                             val isBigshare = ipo.registrar.contains("bigshare", ignoreCase = true)
 

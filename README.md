@@ -4,8 +4,10 @@ A native Android live dashboard and quantitative trading companion for Indian fi
 
 Built with **Jetpack Compose**, **Kotlin Coroutines & Flow**, **Room SQLite**, and a pure Kotlin technical analysis engine.
 
-Allotment alerts use Android WorkManager (roughly every six hours while connected
-and the battery is not low). Allow notifications in Android settings and enable
+Allotment alerts use Android WorkManager (about hourly while connected
+and the battery is not low), plus a prompt check after an in-app refresh.
+Android can delay background jobs, so delivery is best effort rather than instant.
+Allow notifications in Android settings and enable
 the Allotment alert toggle. Blocked notifications remain pending: saved decisive
 results are delivered on a later worker run without another registrar query.
 Bigshare requires a CAPTCHA and an official-portal check. Maashitla PAN
@@ -39,10 +41,10 @@ Axewatch App
 
 ### 1. IPO Tab
 
-#### A. IPOs & GMP Board
+#### A. Current IPOs and GMP
 - **Active & Forthcoming Issues**: Real-time Mainboard and SME IPO issues fetched from live aggregators.
-- **Clear ordering**: Issues are recent-first. The GMP board shows Open and Upcoming issues first, with the highest measured GMP at the top of each stage and a Mainboard/SME tag.
-- **Compact cards**: Issue summaries stay short; tap **More Details** for registrar, dates, subscription breakdown, and the calculator.
+- **One current board**: Open and Forthcoming are separate sections in the same view. Cards show measured GMP and subscription side by side, with a Mainboard/SME tag; each section is sorted by GMP. Missing data shows `—`.
+- **Compact cards**: Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own subtab.
 - **Past listings**: Issue, listing, and current prices come from their distinct source columns. Missing prices display `—` rather than a copied issue price.
 - **Live Subscription Tracking**: SEBI subscription splits parsed in real-time across:
   - **QIB** (Qualified Institutional Buyers)
@@ -71,6 +73,7 @@ Axewatch App
 - **Family PAN Vault**: On-device Room storage for multiple family PANs with 1-tap bulk checking. Device storage encryption depends on Android settings.
 - **Strict PII Protection**: Full PAN numbers are stored strictly on-device in Room database, masked everywhere (`AB*****F`), and never logged or exposed.
 - **Manual Allotment Journal**: Hand-log outcomes checked on official portals; Bigshare requires CAPTCHA.
+- **Focused allotment list**: Open issues and issues closed within 30 days only. Saved older result history remains visible. Saved-vault PANs are checked when results are due, with distinct allotted, not allotted, and no-application alerts where the registrar supports an automated check.
 
 ---
 

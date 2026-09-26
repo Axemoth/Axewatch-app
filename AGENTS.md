@@ -60,6 +60,13 @@ History of removed fabrications (do not reintroduce):
 - **Manual handoff**: Bigshare requires a server CAPTCHA. BSE/NSE and
   other unsupported registrar portals require an official-site check; never
   claim they all require CAPTCHA. Maashitla is automated, not manual.
+- **Public reachability probe (2026-09-26)**: MUFG's public-issues page and
+  cookie-warmed `IPO.aspx/GetDetails` returned HTTP 200; Maashitla's public
+  `/api/public-issue/companies` returned HTTP 200 with one company. KFintech's
+  official IPO status page was reachable in public search, and Bigshare's
+  official status page displayed a CAPTCHA. These probes used no PAN and do
+  not prove any particular user's allotment result; live PAN lookups still
+  require the in-app flow and an issued result.
 - **Statuses**: `ALLOTTED` / `NOT_ALLOTTED` / `NOT_APPLIED` / `RESULTS_NOT_OUT`
   / `LOOKUP_FAILED` (transport trouble — must never render as "Not Allotted").
   `AllotmentRecordEntity.statusLabel` + `isLookupFailed` encode the vocabulary;
@@ -98,7 +105,7 @@ History of removed fabrications (do not reintroduce):
   (service logs status codes/counts only), responses, or error text.
 - **Health**: `onSourceResult` callback → repository stats → strip shows
   measured `OPERATIONAL`/`DEGRADED`/`IDLE`/`CAPTCHA_HANDOFF`, never constants.
-- **Declaration watcher** (`data/work/AllotWatcherWorker`, 6h WorkManager,
+- **Declaration watcher** (`data/work/AllotWatcherWorker`, hourly WorkManager,
   connected + battery-not-low): one directory refresh per run, then paced
   MUFG/KFin checks ONLY for declared issues x saved PANs without a decisive
   record; captcha-walled registrars get a tap-to-open nudge, never a query.
@@ -106,6 +113,13 @@ History of removed fabrications (do not reintroduce):
   Notifications carry holder labels + masked PANs only. Toggle in the
   Allotment tab (`allot_watch_enabled`, default on); snapshot
   (`ipo_snapshot_v1` prefs) written on every refresh, no Room changes.
+- An in-app market refresh queues a one-time watcher run (15-minute throttle
+  unless the issue snapshot changed); enabling alerts or saving a PAN queues
+  one too. Android may defer background work, so do not promise an instant
+  notification. The worker checks only saved PANs, retries unresolved pairs,
+  and delivers distinct `ALLOTTED`, `NOT_ALLOTTED`, and `NOT_APPLIED` alerts.
+  Snapshot close dates bound watcher candidates to the same recent window as
+  Allotment; old result history remains in Room.
 - Notification delivery is acknowledged only when app/channel notifications are
   enabled and posting succeeds. Replay pending decisive saved records before
   skipping decided pairs; never query again merely to retry notification delivery.
@@ -150,11 +164,12 @@ History of removed fabrications (do not reintroduce):
   must honor that two-digit year. Test with at least two rows having distinct
   issue/listing/current prices. If a source leaves a price blank, store `0`
   and render `—`; never backfill it from issue price or GMP.
-- **GMP board**: source rows retain their Mainboard/SME category. Show the
-  tag beside status, put Open then Upcoming ahead of Closed/Listed, and sort
-  each stage by measured GMP descending. Never sort only by a stale
-  last-updated string. Keep cards compact and the IPO subscription breakdown
-  behind `More Details`. Cross-source name joins and subscription joins may
+- **Current IPO board**: Open and Forthcoming are two sections in one tab;
+  each card shows measured GMP and subscription together, with its Mainboard/SME
+  tag. Sort each section by measured GMP descending. Past listings remain a
+  separate subtab. No separate GMP board should duplicate the same issues.
+  Keep cards compact; expanded details hold the full category split. Cross-source
+  name joins and subscription joins may
   use only an exact normalized key or one unique ≥10-character partial match;
   never take the first of several candidates.
 - **Price/subscription honesty**: a single published issue price is not a
@@ -178,9 +193,13 @@ History of removed fabrications (do not reintroduce):
   this means a throttled 50-quote refresh (Yahoo 429 risk) — a future work
   item, not a quick edit. Do not present unquoted rows as live; do not
   "fix" by inventing fresher numbers.
-- **Allotment UX rules**: picker sections are Allotment due/results → Open now →
-  Upcoming, recent-first (`ipoSection`/`ipoRecencyKey`/`parseLooseDate`,
-  all unit-tested); default selection is the most recent declared issue;
+- **Allotment UX rules**: the visible issue list contains open issues and
+  issues closed in the past 30 calendar days only; forthcoming and older
+  issues are excluded. Saved result history remains visible. Picker sections
+  are Allotment due/results → Open now → Recently closed, recent-first;
+  default selection is the most recent due issue;
+  decisive Room records immediately put their issue in the featured results
+  strip even if a tracker status lags;
   Check button shows a spinner and disables while busy; LOOKUP_FAILED rows
   carry a one-tap retry resolved via the vault (records alone never
   re-identify a PAN).

@@ -120,6 +120,19 @@ fun daysSinceLooseDate(
 /** Close age above this lands in the Older section (registrar pages rotate off). */
 const val OLDER_CLOSE_AGE_DAYS = 30L
 
+/** Only bidding issues and issues closed within the last 30 calendar days belong in Allotment. */
+fun isRecentAllotmentIssue(
+    issue: IpoIssue,
+    now: java.util.Calendar = java.util.Calendar.getInstance()
+): Boolean {
+    val today = todayLooseDateKey(now)
+    if (issue.isBiddingNotStarted(today)) return false
+    val closeAge = daysSinceLooseDate(issue.issueCloseDate, now)
+    if (closeAge != null) return closeAge >= 0 && closeAge <= OLDER_CLOSE_AGE_DAYS ||
+        (closeAge < 0 && issue.status.equals("Active", true))
+    return issue.status.equals("Active", true) || issue.status.equals("Open", true)
+}
+
 /**
  * Tracker-style lifecycle section for the allotment picker, mirroring the
  * web dashboard: declared results first, then open, upcoming, closed
@@ -333,6 +346,60 @@ data class GmpItem(
     val lastUpdated: String,
     val category: String = "Unknown"
 )
+
+data class CurrentIpoRow(val issue: IpoIssue, val stage: Int)
+
+/** One issue per company, with an unambiguous GMP match and no invented subscription. */
+fun currentIpoRows(issues: List<IpoIssue>, gmps: List<GmpItem>): List<CurrentIpoRow> {
+    val names = issues.map { it.companyName }
+    val used = mutableSetOf<Int>()
+    val rows = issues.mapIndexedNotNull { index, issue ->
+        val stage = if (issue.isBiddingNotStarted()) 1 else if (
+            issue.status.equals("Active", true) || issue.status.equals("Open", true)
+        ) 0 else return@mapIndexedNotNull null
+        val matches = gmps.withIndex().filter { (_, gmp) ->
+            gmp.symbol == issue.symbol ||
+                com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(issue.companyName, gmp.companyName)
+        }
+        val match = matches.singleOrNull()?.takeIf { (_, gmp) ->
+            names.count { name ->
+                com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(name, gmp.companyName)
+            } == 1
+        }
+        if (match != null) used.add(match.index)
+        val gmp = match?.value
+        val merged = if (gmp == null) issue else issue.copy(
+            gmpAmount = gmp.gmpAmount,
+            gmpPercent = gmp.gmpPercent,
+            estListingPrice = gmp.estListingPrice,
+            category = issue.category.takeIf { it == "SME" || it == "Mainboard" }
+                ?: gmp.category
+        )
+        CurrentIpoRow(merged, stage)
+    }.toMutableList()
+    for ((index, gmp) in gmps.withIndex()) {
+        if (index in used || issues.any {
+            com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.companyName, gmp.companyName)
+        }) continue
+        val stage = when (gmp.status.lowercase()) {
+            "open", "active" -> 0
+            "upcoming", "forthcoming" -> 1
+            else -> continue
+        }
+        rows.add(CurrentIpoRow(IpoIssue(
+            symbol = gmp.symbol, companyName = gmp.companyName,
+            category = gmp.category, status = gmp.status,
+            issueOpenDate = "", issueCloseDate = "", priceBand = if (gmp.issuePrice > 0) "₹${gmp.issuePrice.toInt()}" else "—",
+            issuePrice = gmp.issuePrice, lotSize = 0, issueSizeCr = 0.0, registrar = "Unknown",
+            gmpAmount = gmp.gmpAmount, gmpPercent = gmp.gmpPercent,
+            estListingPrice = gmp.estListingPrice
+        ), stage))
+    }
+    return rows.distinctBy { com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(it.issue.companyName) }
+        .sortedWith(compareBy<CurrentIpoRow> { it.stage }
+            .thenByDescending { it.issue.gmpAmount }
+            .thenBy { it.issue.companyName })
+}
 
 /** Current issues lead the board; higher measured GMP leads within each stage. */
 fun sortGmpBoard(items: List<GmpItem>, issues: List<IpoIssue> = emptyList()): List<GmpItem> {

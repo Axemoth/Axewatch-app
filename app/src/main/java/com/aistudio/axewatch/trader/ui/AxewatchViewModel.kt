@@ -257,7 +257,13 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         _isRefreshing.value = true
         viewModelScope.launch {
             try {
+                val previousIpos = repository.readIpoSnapshot()
                 repository.refreshMarket()
+                if (_allotAlertsEnabled.value) {
+                    com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.runNow(
+                        getApplication(), previousIpos != repository.readIpoSnapshot()
+                    )
+                }
                 _selectedStock.value?.let { st ->
                     val updated = stocks.value.find { it.symbol == st.symbol } ?: st
                     _selectedStock.value = updated
@@ -401,6 +407,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         _allotAlertsEnabled.value = enabled
         if (enabled) {
             com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.schedule(getApplication())
+            com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.runNow(getApplication(), true)
         } else {
             com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.cancel(getApplication())
         }
@@ -424,6 +431,9 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     fun savePan(pan: String, holderName: String, relation: String) {
         viewModelScope.launch {
             val ok = repository.savePan(pan, holderName, relation)
+            if (ok && _allotAlertsEnabled.value) {
+                com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.runNow(getApplication(), true)
+            }
             _toastMessage.emit(
                 if (ok) "PAN saved securely to Vault"
                 else "Invalid PAN format — use AAAAA9999A"
