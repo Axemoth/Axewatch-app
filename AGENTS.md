@@ -13,8 +13,12 @@
   `MainActivity.kt`, `ui/AxewatchViewModel.kt`.
 - Tests: `app/src/test/...` (JVM/Robolectric). No `com.example` anywhere.
 - CI (`.github/workflows/main.yml`): JDK Temurin 17 + Gradle 9.3.1 →
-  `testDebugUnitTest` → `assembleDebug` → uploads APK. CI creates
-  `debug.keystore`; locally create it with the same keytool invocation.
+  `testDebugUnitTest` → `assembleRelease` → uploads the updatable APK.
+  CI's generated `debug.keystore` is only for tests; release signing uses
+  the stable keystore restored from GitHub Actions secrets. The local
+  `debug.keystore` signed the 2026-09-26 distributed APK; its certificate
+  SHA-256 is `F89947B16E54CBC7BAD9076F4F574DFB294659BE494A210F8050A0CA768122D6`.
+  Future release APKs must use this certificate to update those phones in place.
   `debug.keystore` and `.env` are gitignored — never commit them.
 
 ## 1. Rule #1 — NO FABRICATED DATA (the core rule)
@@ -236,9 +240,20 @@ History of removed fabrications (do not reintroduce):
 
 ## 4. Build & test
 
+- **Update contract**: keep `applicationId` unchanged; `versionCode` comes
+  from `git rev-list --count HEAD`, so build an update from a new commit and
+  fetch full history in CI. Never reset it to 1 or distribute CI debug APKs:
+  a newly generated debug key cannot update the user's installed app.
+  `assembleRelease` requires `KEYSTORE_PATH`, `STORE_PASSWORD`, `KEY_ALIAS`,
+  `KEY_PASSWORD`; CI restores the same key from four repository secrets
+  documented in README. If the key is lost, an APK cannot update the existing
+  install without a one-time uninstall (and loss of local Room data).
+
 - Toolchain: JDK 17 + Gradle 9.3.1 + SDK `platforms;android-36` +
   `build-tools;36.0.0`. Set `JAVA_HOME`, `ANDROID_HOME`/`ANDROID_SDK_ROOT`.
-- `gradle testDebugUnitTest assembleDebug` (from `Axewatch-app/`).
+- `gradle testDebugUnitTest assembleRelease` (from `Axewatch-app/`, with
+  the four signing environment variables set). CI verifies the signer
+  fingerprint and requires a versionCode above the original APK's 1.
 - Robolectric runs on JDK 17 → unit tests pin SDK 35
   (`app/src/test/resources/robolectric.properties` + per-class `@Config`);
   SDK 36 sandboxes require JDK 21. Keep the pin until CI moves to JDK 21.

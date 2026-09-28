@@ -1,5 +1,12 @@
 import com.google.gms.googleservices.GoogleServicesPlugin.MissingGoogleServicesStrategy
 
+val commitVersionCode = providers.exec {
+  commandLine("git", "rev-list", "--count", "HEAD")
+}.standardOutput.asText.map { it.trim().toInt() }.get()
+val releaseRequested = gradle.startParameter.taskNames.any {
+  it.contains("Release", ignoreCase = true)
+}
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -17,19 +24,28 @@ android {
     applicationId = "com.aistudio.axewatch.trader"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    // The checkout must contain full Git history (CI uses fetch-depth: 0).
+    // Every committed build can update the preceding APK in place.
+    versionCode = commitVersionCode
+    versionName = "1.0.$commitVersionCode"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   signingConfigs {
     create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
-      storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
-      keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      // A missing key must fail the release build, never silently mint a new key.
+      val keystorePath = System.getenv("KEYSTORE_PATH")
+      val password = System.getenv("STORE_PASSWORD")
+      val alias = System.getenv("KEY_ALIAS")
+      val keyPasswordValue = System.getenv("KEY_PASSWORD")
+      if (releaseRequested && listOf(keystorePath, password, alias, keyPasswordValue).any { it.isNullOrBlank() }) {
+        error("KEYSTORE_PATH, STORE_PASSWORD, KEY_ALIAS and KEY_PASSWORD are required for an updatable release APK")
+      }
+      if (keystorePath != null) storeFile = file(keystorePath)
+      storePassword = password
+      keyAlias = alias
+      keyPassword = keyPasswordValue
     }
     create("debugConfig") {
       storeFile = file("${rootDir}/debug.keystore")
@@ -80,6 +96,7 @@ dependencies {
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
+  implementation(libs.androidx.fragment)
   // implementation(libs.androidx.camera.camera2)
   // implementation(libs.androidx.camera.core)
   // implementation(libs.androidx.camera.lifecycle)

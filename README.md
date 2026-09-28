@@ -119,9 +119,49 @@ Axewatch App
 
 ## Building the Project
 
+### Installing future updates over the current APK
+
+Android updates an installed APK in place only when the `applicationId` and
+signing certificate stay the same and the new `versionCode` is higher. This
+project keeps `com.aistudio.axewatch.trader` and derives `versionCode` from the
+full Git commit count. Commit a change before building an update; CI checks out
+full history. The release APK is signed with a stable key rather than a newly
+generated CI debug key. Installing that APK on the phone prompts for an update
+and preserves the app's local data. Sideloaded APKs cannot silently install
+themselves; Android still asks the user to approve the installation.
+
+The APK shared on 26 September 2026 is signed by the local
+`debug.keystore` (SHA-256 certificate fingerprint
+`F8:99:47:B1:6E:54:CB:C7:BA:D9:07:6F:4F:57:4D:FB:29:46:59:BE:49:4A:21:0F:80:50:A0:CA:76:81:22:D6`).
+To update that installation without uninstalling, sign all future release APKs
+with **this same keystore**. Back it up securely; never commit or email it.
+An APK made by an older CI run used a different, disposable debug key and
+cannot be updated by this release APK. That installation needs a one-time
+uninstall and reinstall, which removes locally stored data.
+
+For a local release build, set `KEYSTORE_PATH` to the backed-up keystore,
+`STORE_PASSWORD` to its password, `KEY_ALIAS` to its alias, and `KEY_PASSWORD`
+to the key password, then run `gradle assembleRelease`. The existing local
+debug keystore uses alias `androiddebugkey` and password `android` for both
+store and key. Verify the release APK's signer fingerprint before distributing
+it. Distribute `app/build/outputs/apk/release/app-release.apk`, not a CI debug
+APK.
+
+For GitHub Actions, configure these repository secrets once:
+
+- `ANDROID_SIGNING_KEY_BASE64`: base64 encoding of that same keystore file
+- `ANDROID_STORE_PASSWORD`: keystore password
+- `ANDROID_KEY_ALIAS`: signing alias
+- `ANDROID_KEY_PASSWORD`: key password
+
+The workflow fails rather than publishing an APK when signing secrets are
+missing. Each push to `main` then builds and uploads the signed
+`Axewatch-update-apk` artifact. Download its APK and open it on the phone to
+install the update.
+
 ### Prerequisites
 - JDK 17 or higher
-- Android SDK (API 34/35)
+- Android SDK 36 with build-tools 36.0.0
 
 ### Build Commands
 ```bash
@@ -130,10 +170,16 @@ Axewatch App
 
 # Build debug APK
 ./gradlew assembleDebug
+
+# Build an APK that updates the installed app (after setting signing variables)
+./gradlew assembleRelease
 ```
 
 The output APK will be located at:
 `app/build/outputs/apk/debug/app-debug.apk`
+
+The updatable release APK is at
+`app/build/outputs/apk/release/app-release.apk`.
 
 ---
 
