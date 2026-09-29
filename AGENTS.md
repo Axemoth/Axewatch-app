@@ -196,10 +196,25 @@ History of removed fabrications (do not reintroduce):
   separate line; a long SME name once squeezed its chip into vertical letters
   (issue #1). Keep collapsed cards short and the allotment check action in a
   neutral action color; reserve green/red for measured outcomes.
+- **IPO lifecycle and local history**: A parseable close date before today outranks
+  a stale Open status; a future open date outranks a stale Active status. A
+  confirmed recent past listing also keeps its matching GMP-only row out of
+  Current. `IpoHistoryCache` (SharedPreferences, separate from the declaration
+  watcher's snapshot) retains observed name, type, registrar, dates and measured
+  subscription totals/splits for 60 days after close. Past Listings merges
+  these with real performance rows; a recently closed issue without a listing
+  row has unknown listing/current prices and is labeled pending. Never copy
+  issue/GMP price into listing price or treat a missing subscription split as
+  measured zero. Match only one unambiguous IPO name; different offerings of
+  the same company must respect recorded open/listing dates. The cache does not
+  trigger PAN checks or allotment notifications. Regression fixtures include
+  Robokidz's 23 Sep 2026 close with a stale Open tracker label.
 - **Price/subscription honesty**: a single published issue price is not a
   price band; do not invent a 95% lower bound. A combined SME NII/HNI value
   is not separate sHNI and bHNI values. Unknown splits show `—`.
-- Seeds are **empty/zeroed** until live data lands; offline = empty states.
+- Live market/GMP seeds are **empty/zeroed** until data lands. Only previously
+  observed closed IPO metadata/subscription can populate Past Listings offline;
+  unknown listing prices remain unknown.
 - Trade ideas: on-device rule engine (`TechnicalAnalysisEngine`) over real
   Yahoo bars. The Signals tab **auto-runs once (cached)** on entry
   (`autoScanIdeas`, skips when results exist or a scan ran within the 6h

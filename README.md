@@ -52,7 +52,7 @@ the app starts from a notification.
 - **Active & Forthcoming Issues**: Real-time Mainboard and SME IPO issues fetched from live aggregators.
 - **One current board**: Open and Forthcoming are separate sections in the same view. Cards show measured GMP and subscription side by side, with a Mainboard/SME tag; each section is sorted by GMP. Missing data shows `—`.
 - **Compact cards**: Long company names get their own full-width lines; category and status stay readable on narrow phones. Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own section. A loading state distinguishes slow live feeds from an empty board.
-- **Past listings**: Issue, listing, and current prices come from their distinct source columns. Missing prices display `—` rather than a copied issue price.
+- **Past listings**: A recorded close date removes an IPO from Current even if a tracker still says Open. Recently closed issues appear here while listing data is pending. Issue, listing, and current prices come from their distinct source columns; missing prices display `—` rather than a copied issue price. The app keeps observed names, Mainboard/SME types, registrar tags, and last measured subscription totals and category splits locally for 60 days after close, including at least the first week. A source outage cannot turn a missing split into a measured zero.
 - **Live Subscription Tracking**: SEBI subscription splits parsed in real-time across:
   - **QIB** (Qualified Institutional Buyers)
   - **NII** (Non-Institutional Investors)
@@ -176,7 +176,8 @@ install the update.
 
 ### Regression checks
 
-Run `testDebugUnitTest` for registrar quantity fixtures, missing/duplicate/multiple
+Run `testDebugUnitTest` for IPO close-date classification, recent subscription
+cache restoration and past-listing joins, registrar quantity fixtures, missing/duplicate/multiple
 applications, status separation, safe detail merging, unique vault matches,
 notification routing, navigation/state restoration, and the v1→v2 Room migration.
 The migration test seeds all seven user tables and verifies their data after Room

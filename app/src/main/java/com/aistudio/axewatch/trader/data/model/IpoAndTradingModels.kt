@@ -150,9 +150,10 @@ fun allotPickerSection(
     val effectiveToday = todayKey ?: todayLooseDateKey(now)
     if (decided || issue.isAllotmentOut(effectiveToday, regDir)) return 0
     if (issue.isBiddingNotStarted(effectiveToday)) return 2
+    val age = daysSinceLooseDate(issue.issueCloseDate, now)
+    if (age != null && age > 0) return if (age > OLDER_CLOSE_AGE_DAYS) 4 else 3
     val s = issue.status.lowercase()
     if (s == "active" || s == "open") return 1
-    val age = daysSinceLooseDate(issue.issueCloseDate, now)
     if (age != null && age > OLDER_CLOSE_AGE_DAYS) return 4
     return 3
 }
@@ -206,7 +207,7 @@ fun ipoRecencyKey(issue: IpoIssue): Long {
  */
 fun IpoIssue.isBiddingNotStarted(todayKey: Long = todayLooseDateKey()): Boolean {
     val openKey = parseLooseDate(issueOpenDate, (todayKey / 10000).toInt())
-    if (openKey > 0 && openKey > todayKey) return true
+    if (openKey > 0) return openKey > todayKey
     val s = status.lowercase()
     return s == "forthcoming" || s == "upcoming" || s.contains("pre")
 }
@@ -303,6 +304,10 @@ fun IpoIssue.getAllotmentBadge(
     if (isBiddingNotStarted()) {
         return AllotmentBadgeInfo("Pre-Apply", isGreenCheck = false)
     }
+    val closeKey = parseLooseDate(issueCloseDate, (todayKey / 10000).toInt())
+    if (closeKey > 0 && closeKey < todayKey) {
+        return AllotmentBadgeInfo("Bidding closed", isGreenCheck = false, isAmber = true)
+    }
     if (status.equals("Active", ignoreCase = true) || status.equals("Open", ignoreCase = true)) {
         return AllotmentBadgeInfo("Bidding Open", isGreenCheck = false)
     }
@@ -350,13 +355,42 @@ data class GmpItem(
 data class CurrentIpoRow(val issue: IpoIssue, val stage: Int)
 
 /** One issue per company, with an unambiguous GMP match and no invented subscription. */
-fun currentIpoRows(issues: List<IpoIssue>, gmps: List<GmpItem>): List<CurrentIpoRow> {
+fun IpoIssue.currentStage(todayKey: Long = todayLooseDateKey()): Int? {
+    val closeKey = parseLooseDate(issueCloseDate, (todayKey / 10000).toInt())
+    if (closeKey > 0 && closeKey < todayKey) return null
+    val openKey = parseLooseDate(issueOpenDate, (todayKey / 10000).toInt())
+    if (openKey > todayKey) return 1
+    if (status.equals("Listed", true) || status.equals("Allotted", true) ||
+        status.equals("Closed", true)) return null
+    if (openKey > 0 && closeKey >= todayKey) return 0
+    if (status.equals("Forthcoming", true) || status.equals("Upcoming", true)) return 1
+    return if (status.equals("Active", true) || status.equals("Open", true)) 0 else null
+}
+
+/** Exchange dates and confirmed past records outrank a tracker that still says Open. */
+fun currentIpoRows(
+    issues: List<IpoIssue>, gmps: List<GmpItem>,
+    past: List<PastIpoItem> = emptyList(), todayKey: Long = todayLooseDateKey()
+): List<CurrentIpoRow> {
+    fun listedAlready(name: String, price: Double, openDate: String = ""): Boolean {
+        val canon = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(name)
+        val open = parseLooseDate(openDate, (todayKey / 10000).toInt())
+        return past.any { item ->
+            if (com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(item.companyName) != canon) return@any false
+            val listed = parseLooseDate(item.listingDate, (todayKey / 10000).toInt())
+            val close = parseLooseDate(item.issueCloseDate, (todayKey / 10000).toInt())
+            val date = listed.takeIf { it > 0 } ?: close
+            val sameOffering = open <= 0 || date <= 0 || date >= open
+            val recent = date > 0 && daysBetweenDateKeys(date, todayKey) in 0..60
+            val samePrice = price > 0 && item.issuePrice > 0 && kotlin.math.abs(price - item.issuePrice) < 0.01
+            sameOffering && (recent || (item.listingPrice > 0 && samePrice))
+        }
+    }
     val names = issues.map { it.companyName }
     val used = mutableSetOf<Int>()
     val rows = issues.mapIndexedNotNull { index, issue ->
-        val stage = if (issue.isBiddingNotStarted()) 1 else if (
-            issue.status.equals("Active", true) || issue.status.equals("Open", true)
-        ) 0 else return@mapIndexedNotNull null
+        val stage = issue.currentStage(todayKey) ?: return@mapIndexedNotNull null
+        if (listedAlready(issue.companyName, issue.issuePrice, issue.issueOpenDate)) return@mapIndexedNotNull null
         val matches = gmps.withIndex().filter { (_, gmp) ->
             gmp.symbol == issue.symbol ||
                 com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(issue.companyName, gmp.companyName)
@@ -378,6 +412,7 @@ fun currentIpoRows(issues: List<IpoIssue>, gmps: List<GmpItem>): List<CurrentIpo
         CurrentIpoRow(merged, stage)
     }.toMutableList()
     for ((index, gmp) in gmps.withIndex()) {
+        if (listedAlready(gmp.companyName, gmp.issuePrice)) continue
         if (index in used || issues.any {
             com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.ipoNamesMatch(it.companyName, gmp.companyName)
         }) continue
@@ -428,7 +463,14 @@ data class PastIpoItem(
     val currentGainPercent: Double = 0.0,
     val totalSub: Double = 0.0,
     val listingDate: String = "",
-    val category: String = "Unknown"
+    val category: String = "Unknown",
+    val registrar: String = "Unknown",
+    val issueCloseDate: String = "",
+    val qibSub: Double = 0.0,
+    val niiSub: Double = 0.0,
+    val shniSub: Double = 0.0,
+    val bhniSub: Double = 0.0,
+    val riiSub: Double = 0.0
 )
 
 data class TradeIdea(

@@ -45,4 +45,27 @@ class CurrentIpoRowsTest {
         assertEquals(0.0, rows[0].issue.totalSub, 0.001)
         assertTrue(rows[0].issue.issueCloseDate.isBlank())
     }
+
+    @Test fun `closed Robokidz cannot remain open or reappear as a gmp only row`() {
+        val robokidz = issue("Robokidz Eduventures", "Active").copy(
+            issueOpenDate = "21 Sep 2026", issueCloseDate = "23 Sep 2026")
+        val past = PastIpoItem(robokidz.symbol, robokidz.companyName, 106.0, 0.0,
+            listingGainPercent = 0.0, issueCloseDate = robokidz.issueCloseDate)
+        val rows = currentIpoRows(listOf(robokidz),
+            listOf(gmp(robokidz.companyName, "Open", 20.0)), listOf(past), 20260929)
+        assertTrue(rows.isEmpty())
+        assertTrue(currentIpoRows(emptyList(), listOf(gmp(robokidz.companyName, "Open", 20.0)),
+            listOf(past), 20260929).isEmpty())
+        assertEquals("Bidding closed", robokidz.getAllotmentBadge(20260929).label)
+    }
+
+    @Test fun `recorded dates outrank stale forthcoming and open labels`() {
+        val open = issue("Open Today", "Forthcoming").copy(
+            issueOpenDate = "28 Sep 2026", issueCloseDate = "30 Sep 2026")
+        val future = issue("Future Issue", "Active").copy(
+            issueOpenDate = "03 Oct 2026", issueCloseDate = "05 Oct 2026")
+        val rows = currentIpoRows(listOf(open, future), emptyList(), todayKey = 20260929)
+        assertEquals(listOf(0, 1), rows.map { it.stage })
+        assertTrue(!open.isBiddingNotStarted(20260929))
+    }
 }

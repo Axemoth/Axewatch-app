@@ -6,6 +6,9 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import com.aistudio.axewatch.trader.data.model.GmpItem
 import com.aistudio.axewatch.trader.data.model.IpoIssue
 import com.aistudio.axewatch.trader.data.model.PastIpoItem
@@ -40,7 +43,10 @@ class IpoScreenshotTest {
             companyName = "Shree Maharaja Engineering and Manufacturing Industries",
             category = "SME", gmpAmount = 42.0)
         val past = PastIpoItem("AXIOMGAS", "Axiom Gas Engineering", 54.0,
-            54.75, 54.05, 1.4, 0.1, 1.39, "25-Sep-26", "SME")
+            54.75, 54.05, 1.4, 0.1, 1.39, "25-Sep-26", "SME",
+            registrar = "Maashitla", issueCloseDate = "22 Sep 2026",
+            qibSub = 0.7, niiSub = 2.3, shniSub = 2.9,
+            bhniSub = 1.9, riiSub = 4.2)
         compose.setContent {
             AxewatchTheme { IpoScreen(listOf(issue, longSme), listOf(gmp), listOf(past)) }
         }
@@ -48,6 +54,28 @@ class IpoScreenshotTest {
         compose.onAllNodesWithText("2.5x total").assertCountEquals(2)
         compose.onNodeWithText("+₹95").assertExists()
         compose.onNodeWithText("Past Listings").performClick()
+        compose.onNodeWithText("Registrar: Maashitla", substring = true).assertExists()
+        compose.onNodeWithText("LAST RECORDED SUBSCRIPTION").assertExists()
         compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-past.png")
+    }
+
+    @Test
+    @Config(qualifiers = "w320dp-h800dp-mdpi", sdk = [35])
+    fun pastListingRetainsSubscriptionAtLargeFont() {
+        val past = PastIpoItem("ROBOKIDZ", "Robokidz Eduventures", 106.0, 0.0,
+            listingGainPercent = 0.0, totalSub = 9.29, category = "SME",
+            registrar = "Maashitla", issueCloseDate = "23 Sep 2026",
+            qibSub = 0.7, niiSub = 8.6, shniSub = 9.5, bhniSub = 8.1, riiSub = 14.8)
+        compose.setContent {
+            AxewatchTheme {
+                CompositionLocalProvider(LocalDensity provides Density(LocalDensity.current.density, 1.3f)) {
+                    IpoScreen(emptyList(), emptyList(), listOf(past))
+                }
+            }
+        }
+        compose.onNodeWithText("Past Listings").performClick()
+        compose.onNodeWithText("Listing data pending", substring = true).assertExists()
+        compose.onNodeWithText("Maashitla", substring = true).assertExists()
+        compose.onRoot().captureRoboImage(filePath = "build/reports/ipo-past-narrow.png")
     }
 }

@@ -76,6 +76,7 @@ class AxewatchRepository(
     val mfService = MutualFundService()
     val newsService = NewsSentimentService()
     private val indexMembershipService = IndexMembershipService()
+    private val ipoHistory = IpoHistoryCache(prefs)
 
     init {
         // Per-attempt allotment health: the service callback fires on every
@@ -526,9 +527,8 @@ class AxewatchRepository(
         // premiums labeled "Today, Live". Live refresh fills this.
         _gmpItems.value = emptyList()
 
-        // Past listings start empty: the previous seeds showed invented
-        // listing gains (up to +120%) as history. Live refresh fills this.
-        _pastIpos.value = emptyList()
+        // Restore observed metadata and subscriptions without inventing listing prices.
+        _pastIpos.value = mergePastIpoHistory(emptyList(), ipoHistory.issues())
 
         val initialSectors = listOf(
             SectorHeatmapItem("NIFTY Metal", 0.0, "—"),
@@ -580,10 +580,19 @@ class AxewatchRepository(
                 val (liveIpos, liveGmps) = result
                 if (liveGmps.isNotEmpty()) _gmpItems.value = liveGmps
                 if (liveIpos.isNotEmpty()) {
-                    _ipos.value = liveIpos
-                    writeIpoSnapshot(liveIpos)
-                    _ipos.value = enrichIpos(dirDeferred.await(), liveIpos)
-                    writeIpoSnapshot(_ipos.value)
+                    val remembered = ipoHistory.issues().associateBy { IpoAllotmentService.canonIpoName(it.companyName) }
+                    val merged = liveIpos.map { issue ->
+                        remembered[IpoAllotmentService.canonIpoName(issue.companyName)]
+                            ?.let { mergeIssueHistory(it, issue) } ?: issue
+                    }
+                    // Show dated IPOs promptly while the slower registrar directory loads.
+                    _ipos.value = merged
+                    writeIpoSnapshot(merged)
+                    val enriched = enrichIpos(dirDeferred.await(), merged)
+                    ipoHistory.record(enriched)
+                    _pastIpos.value = mergePastIpoHistory(_pastIpos.value.filter { it.listingPrice > 0.0 }, ipoHistory.issues())
+                    _ipos.value = enriched
+                    writeIpoSnapshot(enriched)
                 }
                 result
             } catch (_: Exception) {
@@ -714,9 +723,43 @@ class AxewatchRepository(
         // 4. Await past IPO listings
         try {
             val pastListings = pastDeferred.await()
-            if (pastListings.isNotEmpty()) {
-                _pastIpos.value = pastListings
+            val directory = dirDeferred.await()
+            val attributed = pastListings.map { item ->
+                val registrar = lookupDirectory(directory, item.companyName, item.symbol)
+                    ?.displayName() ?: item.registrar
+                item.copy(registrar = registrar)
             }
+            val knownByName = ipoHistory.issues().associateBy { IpoAllotmentService.canonIpoName(it.companyName) }
+            val rememberPast = attributed.filter { item ->
+                val existing = knownByName[IpoAllotmentService.canonIpoName(item.companyName)]
+                val opened = existing?.let { com.aistudio.axewatch.trader.data.model.parseLooseDate(it.issueOpenDate) } ?: 0L
+                val listed = com.aistudio.axewatch.trader.data.model.parseLooseDate(item.listingDate)
+                val differentPrice = existing != null && existing.issuePrice > 0.0 && item.issuePrice > 0.0 &&
+                    kotlin.math.abs(existing.issuePrice - item.issuePrice) >= 0.01
+                !differentPrice && (opened <= 0 || listed <= 0 || listed >= opened)
+            }
+            if (rememberPast.isNotEmpty()) {
+                ipoHistory.record(rememberPast.map { item ->
+                    IpoIssue(
+                        symbol = item.symbol, companyName = item.companyName,
+                        category = item.category,
+                        status = if (item.listingPrice > 0.0) "Listed" else "Closed",
+                        issueOpenDate = "", issueCloseDate = item.issueCloseDate,
+                        priceBand = "", issuePrice = item.issuePrice,
+                        lotSize = 0, issueSizeCr = 0.0, registrar = item.registrar,
+                        qibSub = item.qibSub, niiSub = item.niiSub,
+                        shniSub = item.shniSub, bhniSub = item.bhniSub,
+                        riiSub = item.riiSub, totalSub = item.totalSub
+                    )
+                })
+            }
+            // A recent closed issue belongs here even before a performance
+            // scraper reports its listing price. Missing prices stay unknown.
+            val observed = attributed.ifEmpty {
+                _pastIpos.value.filter { it.listingPrice > 0.0 }
+                    .map { it.copy(currentPrice = 0.0, currentGainPercent = 0.0) }
+            }
+            _pastIpos.value = mergePastIpoHistory(observed, ipoHistory.issues())
         } catch (_: Exception) {
         }
 

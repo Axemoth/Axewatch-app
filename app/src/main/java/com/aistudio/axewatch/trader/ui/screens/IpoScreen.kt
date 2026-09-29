@@ -131,8 +131,8 @@ fun IpoScreen(
     val sectionState = rememberSaveableStateHolder()
     var calculatorIpo by remember { mutableStateOf<IpoIssue?>(null) }
 
-    val currentRows = remember(ipos, gmps, searchQuery) {
-        currentIpoRows(ipos, gmps).filter {
+    val currentRows = remember(ipos, gmps, pastIpos, searchQuery) {
+        currentIpoRows(ipos, gmps, pastIpos).filter {
             searchQuery.isBlank() || it.issue.companyName.contains(searchQuery, ignoreCase = true) ||
                 it.issue.symbol.contains(searchQuery, ignoreCase = true)
         }
@@ -145,7 +145,10 @@ fun IpoScreen(
         }
         matches.filter { it.companyName.isNotBlank() }
             .distinctBy { IpoAllotmentService.canonIpoName(it.companyName) }
-            .sortedWith(compareByDescending { parseLooseDate(it.listingDate) })
+            .sortedWith(compareByDescending<PastIpoItem> {
+                parseLooseDate(it.listingDate).takeIf { date -> date > 0 }
+                    ?: parseLooseDate(it.issueCloseDate)
+            }.thenBy { it.companyName })
     }
 
     calculatorIpo?.let { ipo ->
@@ -870,32 +873,20 @@ private fun PastListingCard(past: PastIpoItem) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = past.companyName,
-                            color = AxeTextPrimary,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (past.symbol.isNotBlank()) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(AxeDarkSurfaceElevated)
-                                    .padding(horizontal = 5.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = past.symbol,
-                                    color = AxePrimaryCyan,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
                     Text(
-                        text = "Listed: ${past.listingDate.ifBlank { "—" }} · Sub: ${if (past.totalSub > 0) "${past.totalSub}x" else "—"}",
+                        text = past.companyName,
+                        color = AxeTextPrimary,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${past.category}${past.symbol.takeIf { it.isNotBlank() }?.let { " · $it" } ?: ""} · Registrar: ${past.registrar}",
+                        color = AxeTextSecondary,
+                        fontSize = 11.sp
+                    )
+                    Text(
+                        text = if (hasListing) "Listed: ${past.listingDate.ifBlank { "Date not reported" }}"
+                            else "Closed: ${past.issueCloseDate.ifBlank { "Date not reported" }} · Listing data pending",
                         color = AxeTextMuted,
                         fontSize = 11.sp
                     )
@@ -918,29 +909,32 @@ private fun PastListingCard(past: PastIpoItem) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            if (listOf(past.totalSub, past.qibSub, past.niiSub, past.shniSub, past.bhniSub, past.riiSub).any { it > 0.0 }) {
+                Text("LAST RECORDED SUBSCRIPTION", color = AxeTextMuted, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = listOf(
+                        "Total" to past.totalSub, "QIB" to past.qibSub, "NII" to past.niiSub,
+                        "sHNI" to past.shniSub, "bHNI" to past.bhniSub, "Retail" to past.riiSub
+                    ).joinToString("  ·  ") { (label, value) -> "$label ${if (value > 0) "${"%.2f".format(value)}x" else "—"}" },
+                    color = AxeTextSecondary, fontSize = 11.sp, lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = "Issue: ${if (past.issuePrice > 0) "₹${"%,.1f".format(past.issuePrice)}" else "—"}",
-                    color = AxeTextMuted,
-                    fontSize = 10.sp,
-                    modifier = Modifier.weight(1f)
+                    color = AxeTextMuted, fontSize = 11.sp
                 )
                 Text(
                     text = "Listing: ${if (hasListing) "₹${"%,.1f".format(past.listingPrice)}" else "—"}",
-                    color = AxeTextSecondary,
-                    fontSize = 10.sp,
-                    modifier = Modifier.weight(1f)
+                    color = AxeTextSecondary, fontSize = 11.sp
                 )
                 Text(
                     text = "Current: ${if (hasCurrent) "₹${"%,.1f".format(past.currentPrice)}" else "—"}",
-                    color = AxePrimaryCyan,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
+                    color = AxePrimaryCyan, fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
                 )
             }
 

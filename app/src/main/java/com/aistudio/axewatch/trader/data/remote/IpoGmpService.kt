@@ -64,7 +64,8 @@ class IpoGmpService {
             "sub" to listOf("sub", "subscription"),
             "price" to listOf("ipo price", "issue price", "price"),
             "listing_price" to listOf("listing price"),
-            "current_price" to listOf("closing price (ltp)", "closing price", "ltp", "current price", "cmp")
+            "current_price" to listOf("closing price (ltp)", "closing price", "ltp", "current price", "cmp"),
+            "type" to listOf("type", "category")
         )
     }
 
@@ -283,6 +284,12 @@ class IpoGmpService {
                 val gmpPct = if (igIpo.gmpPercent > 0) igIpo.gmpPercent else matchedIw.gmpPercent
                 val lot = if (igIpo.lotSize > 0) igIpo.lotSize else matchedIw.lotSize
                 val allotmentDt = igIpo.allotmentDate.ifBlank { matchedIw.allotmentDate }
+                fun knownDate(first: String, second: String) = first.takeIf {
+                    it.isNotBlank() && it != "—" && it != "-"
+                } ?: second
+                val terminal = listOf(igIpo.status, matchedIw.status).firstOrNull {
+                    it == "Listed" || it == "Allotted" || it == "Closed"
+                }
                 val totalSub = max(igIpo.totalSub, matchedIw.totalSub)
                 val qib = max(igIpo.qibSub, matchedIw.qibSub)
                 val nii = max(igIpo.niiSub, matchedIw.niiSub)
@@ -297,6 +304,10 @@ class IpoGmpService {
                         estListingPrice = if (igIpo.issuePrice > 0) igIpo.issuePrice + gmpAmt else igIpo.estListingPrice,
                         lotSize = lot,
                         allotmentDate = allotmentDt,
+                        issueOpenDate = knownDate(igIpo.issueOpenDate, matchedIw.issueOpenDate),
+                        issueCloseDate = knownDate(igIpo.issueCloseDate, matchedIw.issueCloseDate),
+                        status = terminal ?: igIpo.status.takeIf { it != "Unknown" } ?: matchedIw.status,
+                        category = igIpo.category.takeIf { it != "Unknown" } ?: matchedIw.category,
                         totalSub = totalSub,
                         qibSub = qib,
                         niiSub = nii,
@@ -427,7 +438,7 @@ class IpoGmpService {
                 val rawDates = row["dates"] ?: ""
                 val (openDate, closeDate) = parseDates(rawDates)
 
-                val rawStatus = row["status"] ?: "Upcoming"
+                val rawStatus = row["status"].orEmpty()
                 val mappedStatus = mapStatus(rawStatus)
 
                 val symbol = generateSymbol(cleanName)
@@ -662,7 +673,11 @@ class IpoGmpService {
                         currentGainPercent = curGainPct,
                         totalSub = sub,
                         listingDate = listingDate,
-                        category = if (rawName.contains("SME", ignoreCase = true)) "SME" else "Mainboard"
+                        category = when {
+                            rawName.contains("SME", ignoreCase = true) || row["type"].orEmpty().contains("SME", true) -> "SME"
+                            row["type"].orEmpty().contains("main", true) -> "Mainboard"
+                            else -> "Unknown"
+                        }
                     )
                 )
             }
@@ -926,12 +941,12 @@ class IpoGmpService {
     private fun mapStatus(rawStatus: String): String {
         val l = rawStatus.lowercase()
         return when {
-            rawStatus.endsWith(" U") || l.contains("upcoming") || l.contains("forthcom") || l.contains("pre") -> "Forthcoming"
-            rawStatus.endsWith(" O") || l.contains("open") || l.contains("active") -> "Active"
-            rawStatus.endsWith(" C") || l.contains("close") -> "Closed"
-            rawStatus.endsWith(" A") || l.contains("allot") -> "Allotted"
-            rawStatus.endsWith(" L") || l.contains("list") -> "Listed"
-            else -> "Active"
+            rawStatus.endsWith(" L") || l.endsWith("listed") -> "Listed"
+            rawStatus.endsWith(" A") || l.endsWith("allotted") -> "Allotted"
+            rawStatus.endsWith(" C") || l.endsWith("closed") -> "Closed"
+            rawStatus.endsWith(" U") || l.endsWith("upcoming") || l.endsWith("forthcoming") || l.endsWith("pre-apply") -> "Forthcoming"
+            rawStatus.endsWith(" O") || l.endsWith("open") || l.endsWith("active") -> "Active"
+            else -> "Unknown"
         }
     }
 
