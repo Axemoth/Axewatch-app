@@ -37,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -90,11 +91,12 @@ fun MarketScreen(
     indexConstituents: Map<String, List<IndexConstituent>> = emptyMap(),
     indexLoading: Set<String> = emptySet(),
     onLoadIndex: (String) -> Unit = {},
+    onOpenIpo: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var stockFilterTab by remember { mutableIntStateOf(0) } // 0: All, 1: Gainers, 2: Losers, 3: Watchlist
-    var searchQuery by remember { mutableStateOf("") }
+    var stockFilterTab by rememberSaveable { mutableIntStateOf(0) } // 0: All, 1: Gainers, 2: Losers, 3: Watchlist
+    var searchQuery by rememberSaveable { mutableStateOf("") }
     var selectedIndexForModal by remember { mutableStateOf<MarketIndex?>(null) }
     var showAllNews by remember { mutableStateOf(false) }
 
@@ -135,6 +137,22 @@ fun MarketScreen(
             .background(AxeDarkBg),
         contentPadding = PaddingValues(bottom = 80.dp)
     ) {
+        item(key = "ipo_entry") {
+            androidx.compose.material3.OutlinedCard(
+                onClick = onOpenIpo,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                    .testTag("market_ipo_entry"),
+                colors = androidx.compose.material3.CardDefaults.outlinedCardColors(containerColor = AxeDarkSurface)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("IPOs", color = AxePrimaryCyan, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        Text("GMP, subscriptions & allotment", color = AxeTextSecondary, fontSize = 13.sp)
+                    }
+                    Text("→", color = AxePrimaryCyan, fontSize = 22.sp)
+                }
+            }
+        }
         // Section: Top Search Bar & Suggestions
         item {
             Column(

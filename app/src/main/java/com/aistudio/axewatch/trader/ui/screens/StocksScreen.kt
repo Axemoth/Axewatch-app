@@ -21,6 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -73,9 +76,11 @@ fun StocksScreen(
     onAutoScanIdeas: () -> Unit = {},
     scanRunning: Boolean = false,
     scanProgress: Pair<Int, Int> = 0 to 0,
+    onOpenIpo: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var selectedSubTab by remember { mutableIntStateOf(0) } // 0: Market Overview, 1: Paper Trading & Signals
+    val subTabState = rememberSaveableStateHolder()
+    var selectedSubTab by rememberSaveable { mutableIntStateOf(0) } // 0: Market Overview, 1: Paper Trading & Signals
 
     Column(
         modifier = modifier
@@ -103,6 +108,7 @@ fun StocksScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (selected) AxePrimaryCyan.copy(alpha = 0.2f) else Color.Transparent)
                         .clickable { selectedSubTab = index }
+                        .heightIn(min = 48.dp)
                         .padding(vertical = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -131,8 +137,10 @@ fun StocksScreen(
         }
 
         Box(modifier = Modifier.fillMaxSize()) {
+            subTabState.SaveableStateProvider(selectedSubTab) {
             when (selectedSubTab) {
                 0 -> MarketScreen(
+                    onOpenIpo = onOpenIpo,
                     indices = indices,
                     stocks = stocks,
                     sectors = sectors,
@@ -159,6 +167,7 @@ fun StocksScreen(
                     scanRunning = scanRunning,
                     scanProgress = scanProgress
                 )
+            }
             }
         }
     }

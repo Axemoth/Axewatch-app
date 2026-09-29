@@ -50,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -97,12 +98,12 @@ fun PortfolioScreen(
     onSeedSampleHoldings: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    var portTab by remember { mutableIntStateOf(0) } // 0: Holdings, 1: Mutual Funds, 2: Allocation & Risk, 3: Watchlist
+    var portTab by rememberSaveable { mutableIntStateOf(0) } // 0: Holdings, 1: Mutual Funds, 2: Allocation & Risk, 3: Watchlist
     var showCsvImportDialog by remember { mutableStateOf(false) }
     var editingHolding by remember { mutableStateOf<HoldingEntity?>(null) }
     var selectedMfModal by remember { mutableStateOf<MutualFundScheme?>(null) }
-    var mfCategoryFilter by remember { mutableStateOf("All") }
-    var mfSearchQuery by remember { mutableStateOf("") }
+    var mfCategoryFilter by rememberSaveable { mutableStateOf("All") }
+    var mfSearchQuery by rememberSaveable { mutableStateOf("") }
     var showSampleConfirm by remember { mutableStateOf(false) }
 
     // 0.0 = membership seed with no quote yet: absent from the map so every

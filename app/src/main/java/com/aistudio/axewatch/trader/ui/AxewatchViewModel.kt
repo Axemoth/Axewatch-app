@@ -59,14 +59,6 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.refreshMarketNews() }
     }
 
-    // Navigation Tab (0: Market, 1: IPO & GMP, 2: Paper Trading, 3: Portfolio, 4: Allotment)
-    private val _selectedTab = MutableStateFlow(0)
-    val selectedTab: StateFlow<Int> = _selectedTab.asStateFlow()
-
-    fun selectTab(tab: Int) {
-        _selectedTab.value = tab
-    }
-
     // Market Data Flows
     val indices: StateFlow<List<MarketIndex>> = repository.indices.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -496,10 +488,13 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // Deep-link tick: notification taps open the IPO tab's Check Allotment
-    // section. IpoScreen collects and jumps; StateFlow replays for late UI.
+    // Pending notification command: consumed once the Allotment section is visible.
     private val _allotmentSectionTick = MutableStateFlow(0L)
     val allotmentSectionTick: StateFlow<Long> = _allotmentSectionTick.asStateFlow()
+
+    fun consumeAllotmentRequest(request: Long) {
+        if (_allotmentSectionTick.value == request) _allotmentSectionTick.value = 0L
+    }
 
     fun requestAllotmentSection() {
         _allotmentSectionTick.value = System.currentTimeMillis()
@@ -559,12 +554,26 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
      *  can never re-identify it. maskMatches also accepts records stored in
      *  the legacy "ABCDE****F" mask so old LOOKUP_FAILED rows stay retryable. */
     fun retryAllotment(record: AllotmentRecordEntity) {
-        val vault = savedPans.value.find { maskMatches(it.maskedPan, record.maskedPan) }
+        val vault = savedPans.value.filter { maskMatches(it.maskedPan, record.maskedPan) }.singleOrNull()
         if (vault == null) {
             emitMessage("That PAN is no longer in the vault — re-check from the form above")
             return
         }
         checkAllotment(vault.panNumber, record.ipoSymbol, vault.holderName)
+    }
+
+    fun refreshAllotmentDetails(record: AllotmentRecordEntity, pan: String) {
+        if (_allotBusy.value) return
+        viewModelScope.launch {
+            _allotBusy.value = true
+            try {
+                val updated = repository.refreshAllotmentDetails(record, pan)
+                emitMessage(if (updated) "Applied-share details updated" else
+                    "No verified quantity available. Your saved result has been kept.")
+            } catch (_: Exception) {
+                emitMessage("Details could not be refreshed. Your saved result has been kept.")
+            } finally { _allotBusy.value = false }
+        }
     }
 
     fun checkBulkAllotment(ipoSymbol: String) {
@@ -597,10 +606,11 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         ipoSymbol: String,
         status: String,
         sharesAllotted: Int,
-        applicationNo: String
+        applicationNo: String,
+        sharesApplied: Int? = null
     ) {
         viewModelScope.launch {
-            repository.recordManualAllotment(maskedPan, ipoSymbol, status, sharesAllotted, applicationNo)
+            repository.recordManualAllotment(maskedPan, ipoSymbol, status, sharesAllotted, applicationNo, sharesApplied)
             _toastMessage.emit("Allotment status manually recorded")
         }
     }

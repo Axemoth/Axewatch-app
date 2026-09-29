@@ -823,7 +823,8 @@ class AxewatchRepository(
         // so it passes the snapshot's real name/registrar instead of the stub.
         knownName: String? = null,
         knownRegistrar: String? = null,
-        knownDeclared: Boolean = false
+        knownDeclared: Boolean = false,
+        persistResult: Boolean = true
     ): AllotmentRecordEntity = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
         require(IpoAllotmentService.isValidPan(cleanPan)) { "Invalid PAN format" }
@@ -899,9 +900,10 @@ class AxewatchRepository(
             sharesAllotted = sharesAllotted,
             status = status,
             registrar = registrar,
-            applicationNo = appNo
+            applicationNo = appNo,
+            appliedSharesSource = if (queryResult.appliedSharesComplete) "REGISTRAR" else "UNKNOWN"
         )
-        panVaultDao.insertRecord(record)
+        if (persistResult) panVaultDao.insertRecord(record)
         record
     }
 
@@ -1204,24 +1206,43 @@ class AxewatchRepository(
         }
     }
 
+    suspend fun refreshAllotmentDetails(old: AllotmentRecordEntity, pan: String): Boolean = withContext(Dispatchers.IO) {
+        require(IpoAllotmentService.isValidPan(pan) &&
+            com.aistudio.axewatch.trader.data.local.entity.maskMatches(IpoAllotmentService.maskPan(pan), old.maskedPan)) {
+            "Enter the PAN used for this result"
+        }
+        val fresh = checkIpoAllotment(pan, old.ipoSymbol, knownName = old.ipoName,
+            knownRegistrar = old.registrar,
+            knownDeclared = old.status in setOf("ALLOTTED", "NOT_ALLOTTED", "NOT_APPLIED"),
+            persistResult = false)
+        val merged = com.aistudio.axewatch.trader.data.model.mergeAllotmentDetails(old, fresh)
+        if (merged != old) panVaultDao.insertRecord(merged)
+        merged.appliedSharesSource == "REGISTRAR" && merged != old
+    }
+
     suspend fun recordManualAllotment(
         maskedPan: String,
         ipoSymbol: String,
         status: String,
         sharesAllotted: Int,
-        applicationNo: String
+        applicationNo: String,
+        sharesApplied: Int? = null
     ) = withContext(Dispatchers.IO) {
-        val ipo = _ipos.value.find { it.symbol == ipoSymbol } ?: _ipos.value.first()
+        require(com.aistudio.axewatch.trader.data.model.validManualQuantities(status, sharesAllotted, sharesApplied)) {
+            "Check the share quantities"
+        }
+        val ipo = _ipos.value.find { it.symbol == ipoSymbol }
+        val previous = panVaultDao.getAllRecords().first().firstOrNull { it.ipoSymbol == ipoSymbol }
         val record = AllotmentRecordEntity(
             maskedPan = maskedPan,
-            ipoSymbol = ipo.symbol,
-            ipoName = ipo.companyName,
-            // Applied count is unknown for hand-logged rows: 0 renders "—".
-            sharesApplied = if (sharesAllotted > 0) sharesAllotted else 0,
+            ipoSymbol = ipoSymbol,
+            ipoName = ipo?.companyName ?: previous?.ipoName ?: ipoSymbol,
+            sharesApplied = sharesApplied ?: 0,
             sharesAllotted = sharesAllotted,
             status = status,
-            registrar = ipo.registrar,
-            applicationNo = applicationNo
+            registrar = ipo?.registrar ?: previous?.registrar ?: "Unknown",
+            applicationNo = applicationNo,
+            appliedSharesSource = if (sharesApplied != null) "USER" else "UNKNOWN"
         )
         panVaultDao.insertRecord(record)
     }

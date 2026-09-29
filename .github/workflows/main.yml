@@ -40,7 +40,15 @@ jobs:
             -dname "CN=Android Debug,O=Android,C=US"
 
       - name: Run Unit Tests
-        run: gradle testDebugUnitTest
+        run: gradle testDebugUnitTest -Proborazzi.test.record=true
+
+      - name: Upload UI verification images
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Axewatch-ui-verification
+          path: app/build/reports/*.png
+          if-no-files-found: warn
 
       - name: Restore stable release signing key
         env:
@@ -67,7 +75,7 @@ jobs:
             echo 'Release certificate does not match the installed Axewatch APK'; exit 1;
           }
           version_code=$("$aapt" dump badging "$apk" | sed -n "s/.*versionCode='\([0-9]*\)'.*/\1/p" | head -n 1)
-          test "$version_code" -gt 1 || { echo 'Release versionCode must exceed the first distributed APK'; exit 1; }
+          test "$version_code" -gt 25 || { echo 'Release versionCode must exceed installed version 1.0.25'; exit 1; }
 
       - name: Upload APK
         uses: actions/upload-artifact@v4

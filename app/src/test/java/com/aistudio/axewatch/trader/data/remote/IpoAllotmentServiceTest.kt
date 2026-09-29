@@ -217,7 +217,7 @@ class IpoAllotmentServiceTest {
         assertEquals(150, IpoAllotmentService.parseShareCount(150L))
         assertEquals(1234, IpoAllotmentService.parseShareCount("1,234"))
         assertEquals(150, IpoAllotmentService.parseShareCount("150.0"))
-        assertEquals(12, IpoAllotmentService.parseShareCount(12.7))
+        assertEquals(0, IpoAllotmentService.parseShareCount(12.7)) // Fractional shares are not a verified quantity.
         assertEquals(0, IpoAllotmentService.parseShareCount(null))
         assertEquals(0, IpoAllotmentService.parseShareCount(""))
         assertEquals(0, IpoAllotmentService.parseShareCount("null"))

@@ -4,7 +4,11 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.ui.semantics.Role
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,6 +23,8 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -93,7 +99,8 @@ fun IpoScreen(
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit = { _, _, _ -> },
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
     onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
-    onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String) -> Unit = { _, _, _, _, _ -> },
+    onRefreshDetails: (AllotmentRecordEntity, String) -> Unit = { _, _ -> },
+    onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String, applied: Int?) -> Unit = { _, _, _, _, _, _ -> },
     onSavePan: (pan: String, name: String, rel: String) -> Unit = { _, _, _ -> },
     onDeletePan: (PanVaultEntity) -> Unit = {},
     onDeleteRecord: (AllotmentRecordEntity) -> Unit = {},
@@ -101,19 +108,27 @@ fun IpoScreen(
     alertsEnabled: Boolean = false,
     onToggleAlerts: (Boolean) -> Unit = {},
     allotmentSectionTick: Long = 0L,
+    onAllotmentSectionHandled: (Long) -> Unit = {},
     isLoading: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     // 0: IPOs, GMP & Subscription, 1: Check Allotment
-    var mainSection by remember { mutableIntStateOf(0) }
+    var mainSection by rememberSaveable { mutableIntStateOf(0) }
     // Notification tap-through lands here from anywhere in the app.
     LaunchedEffect(allotmentSectionTick) {
-        if (allotmentSectionTick > 0L) mainSection = 1
+        if (allotmentSectionTick > 0L) {
+            mainSection = 1
+            onAllotmentSectionHandled(allotmentSectionTick)
+        }
     }
-    var selectedIpoForCheck by remember { mutableStateOf("") }
+    var selectedIpoForCheck by rememberSaveable { mutableStateOf("") }
 
-    var ipoSubTab by remember { mutableIntStateOf(0) } // 0: Current issues, 1: Past Listings
-    var searchQuery by remember { mutableStateOf("") }
+    var currentSearch by rememberSaveable { mutableStateOf("") }
+    var pastSearch by rememberSaveable { mutableStateOf("") }
+    val searchQuery = if (mainSection == 2) pastSearch else currentSearch
+    val currentScroll = rememberLazyListState()
+    val pastScroll = rememberLazyListState()
+    val sectionState = rememberSaveableStateHolder()
     var calculatorIpo by remember { mutableStateOf<IpoIssue?>(null) }
 
     val currentRows = remember(ipos, gmps, searchQuery) {
@@ -150,35 +165,30 @@ fun IpoScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp, vertical = 6.dp)
+                .height(IntrinsicSize.Min)
                 .clip(RoundedCornerShape(10.dp))
                 .background(AxeDarkSurfaceElevated)
                 .padding(3.dp)
         ) {
-            val mainTabs = listOf(
-                Pair("IPOs & GMP", Icons.Default.TrendingUp),
-                Pair("Check Allotment", Icons.Default.VerifiedUser)
-            )
-            mainTabs.forEachIndexed { index, (title, icon) ->
+            val mainTabs = listOf("Current", "Allotment", "Past Listings")
+            mainTabs.forEachIndexed { index, title ->
                 val selected = mainSection == index
                 Box(
                     modifier = Modifier
                         .weight(1f)
+                        .fillMaxHeight()
                         .clip(RoundedCornerShape(8.dp))
                         .background(if (selected) AxePrimaryCyan.copy(alpha = 0.2f) else Color.Transparent)
-                        .clickable { mainSection = index }
-                        .padding(vertical = 9.dp),
+                        .selectable(selected = selected, role = Role.Tab, onClick = { mainSection = index })
+                        .heightIn(min = 48.dp)
+                        .padding(horizontal = 4.dp, vertical = 9.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = if (selected) AxePrimaryCyan else AxeTextSecondary,
-                            modifier = Modifier.size(15.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
                             text = title,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 16.sp,
                             color = if (selected) AxePrimaryCyan else AxeTextSecondary,
                             fontSize = 12.sp,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
@@ -188,42 +198,11 @@ fun IpoScreen(
             }
         }
 
-        if (mainSection == 0) {
-            // Subscription and GMP share each current-issue card.
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(AxeDarkSurface)
-                    .padding(2.dp)
-            ) {
-                val tabs = listOf("Open & Forthcoming", "Past Listings")
-                tabs.forEachIndexed { index, title ->
-                    val selected = ipoSubTab == index
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (selected) AxePrimaryCyan.copy(alpha = 0.15f) else Color.Transparent)
-                            .clickable { ipoSubTab = index }
-                            .padding(vertical = 6.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            text = title,
-                            color = if (selected) AxePrimaryCyan else AxeTextMuted,
-                            fontSize = 11.sp,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-                        )
-                    }
-                }
-            }
-
+        if (mainSection != 1) {
             // Search Bar
             OutlinedTextField(
                 value = searchQuery,
-                onValueChange = { searchQuery = it },
+                onValueChange = { if (mainSection == 2) pastSearch = it else currentSearch = it },
                 placeholder = { Text("Search IPO by name or symbol…", color = AxeTextMuted, fontSize = 13.sp) },
                 singleLine = true,
                 modifier = Modifier
@@ -245,11 +224,12 @@ fun IpoScreen(
 
             // Content List
             LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 80.dp),
+                state = if (mainSection == 2) pastScroll else currentScroll,
+                modifier = Modifier.fillMaxSize().testTag("ipo_list"),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                when (ipoSubTab) {
+                when (mainSection) {
                     0 -> {
                         // Active & Forthcoming Issues (Descending Order)
                         for (stage in 0..1) {
@@ -291,14 +271,14 @@ fun IpoScreen(
                                             Spacer(Modifier.width(10.dp))
                                         }
                                         Text(if (isLoading) "Loading live IPOs and GMP…"
-                                            else "No open or forthcoming IPOs available. Pull to refresh.",
+                                            else "No open or forthcoming IPOs available. Tap refresh above.",
                                             color = AxeTextMuted, fontSize = 13.sp)
                                     }
                                 }
                             }
                         }
                     }
-                    1 -> {
+                    2 -> {
                         // Past Listings (Descending Order)
                         items(filteredPast, key = { it.companyName }) { past ->
                             PastListingCard(past = past)
@@ -324,6 +304,7 @@ fun IpoScreen(
             }
         } else {
             // Direct Allotment Checker
+            sectionState.SaveableStateProvider("allotment") {
             AllotmentScreen(
                 ipos = ipos.filter { isRecentAllotmentIssue(it) },
                 savedPans = savedPans,
@@ -335,6 +316,7 @@ fun IpoScreen(
                 onCheckAllotment = onCheckAllotment,
                 onCheckBulkAllotment = onCheckBulkAllotment,
                 onRetryRecord = onRetryRecord,
+                onRefreshDetails = onRefreshDetails,
                 onRecordManualAllotment = onRecordManualAllotment,
                 onSavePan = onSavePan,
                 onDeletePan = onDeletePan,
@@ -343,8 +325,10 @@ fun IpoScreen(
                 alertsEnabled = alertsEnabled,
                 onToggleAlerts = onToggleAlerts,
                 isLoading = isLoading,
-                initialSelectedSymbol = selectedIpoForCheck
+                initialSelectedSymbol = selectedIpoForCheck,
+                onInitialSelectionHandled = { selectedIpoForCheck = "" }
             )
+            }
         }
     }
 }
@@ -504,7 +488,7 @@ private fun IpoIssueCard(
                 if (matchedLink != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.clickable {
+                        modifier = Modifier.heightIn(min = 48.dp).clickable {
                             try {
                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(matchedLink.url)).apply {
                                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -646,7 +630,7 @@ private fun IpoIssueCard(
                 text = "Hide details",
                 color = AxePrimaryCyan,
                 fontSize = 11.sp,
-                modifier = Modifier.clickable { detailsExpanded = false }.padding(top = 8.dp)
+                modifier = Modifier.clickable { detailsExpanded = false }.heightIn(min = 48.dp).padding(top = 16.dp)
             )
             }
 
@@ -665,7 +649,7 @@ private fun IpoIssueCard(
                         .background(AxeDarkSurfaceElevated)
                         .border(1.dp, AxeBorder, RoundedCornerShape(8.dp))
                         .clickable(onClick = onCheckAllotment)
-                        .heightIn(min = 40.dp)
+                        .heightIn(min = 48.dp)
                         .padding(horizontal = 8.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
@@ -698,7 +682,7 @@ private fun IpoIssueCard(
                         .clickable {
                             if (detailsExpanded) onCalculateGain() else detailsExpanded = true
                         }
-                        .heightIn(min = 40.dp)
+                        .heightIn(min = 48.dp)
                         .padding(horizontal = 8.dp, vertical = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {

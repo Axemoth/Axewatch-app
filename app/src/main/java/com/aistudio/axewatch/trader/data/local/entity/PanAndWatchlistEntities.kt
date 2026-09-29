@@ -1,5 +1,6 @@
 package com.aistudio.axewatch.trader.data.local.entity
 
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.aistudio.axewatch.trader.data.remote.IpoAllotmentService
@@ -49,7 +50,9 @@ data class AllotmentRecordEntity(
     val status: String, // "ALLOTTED", "NOT_ALLOTTED", "NOT_APPLIED", "RESULTS_NOT_OUT", "LOOKUP_FAILED"
     val registrar: String,
     val checkedAt: Long = System.currentTimeMillis(),
-    val applicationNo: String = ""
+    val applicationNo: String = "",
+    @ColumnInfo(defaultValue = "'LEGACY'")
+    val appliedSharesSource: String = "LEGACY"
 ) {
     val isAllotted: Boolean get() = status == "ALLOTTED"
     val isNotAllotted: Boolean get() = status == "NOT_ALLOTTED"

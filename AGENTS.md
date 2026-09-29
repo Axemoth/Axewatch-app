@@ -83,9 +83,25 @@ History of removed fabrications (do not reintroduce):
   today, or an Allotted/Listed tracker status, allows a negative registrar
   outcome even if a tracker still shows Active. Closed alone and presence in
   a registrar dropdown do not prove publication.
-- **Tolerant share counts**: `parseShareCount` handles ints, "1,234"
-  strings, and decimals (org.json `optInt` returns 0 for string forms and
-  once dropped real allotments); same tolerance in the MUFG XML parser.
+- **Applied-share counts**: `reportedShareCount` distinguishes missing values
+  from explicit zero, accepts ints/comma strings/integral decimals (150.0),
+  and rejects fractions, negative values and overflow. MUFG, KFin and Maashitla
+  aggregate distinct application records per PAN and company. Duplicate IDs with
+  conflicting quantities fail safely; missing quantities or ambiguous anonymous
+  multi-application rows must not be labeled a complete applied total. Never
+  combine unrelated companies or infer applied shares from allotted shares.
+- `AllotmentQueryResult.appliedSharesComplete` carries quantity completeness.
+  Room `appliedSharesSource` is `REGISTRAR`, `USER`, `UNKNOWN`, or `LEGACY`.
+  Unknowns render **Not reported**; positive historical counts remain visible
+  with **Saved count unverified**. Numbers are share quantities, not lot counts,
+  formatted with Indian digit grouping. Missing applied quantities never turn
+  an applied-zero-allotment record into NOT_APPLIED.
+- **Refresh details** is explicit, updates the same history row, and resolves a
+  vault PAN only with `singleOrNull` masked matching. Missing/ambiguous matches
+  require password-style PAN entry. Transport, pending, or conflicting final
+  outcomes preserve the saved result and known count. Do not mass-recheck
+  legacy rows or reset the watcher's notification keys to backfill counts.
+  Manual entry has independent optional applied shares and labels them USER.
 - **Cleaner must survive glued tracker cells**: `cleanCompanyName` peels
   exchange/status tokens off BOTH ends ("SS RetailIPO", "Hero MotorsOPEN",
   "Anand SeamlessBSE SME", "NSE SMEPhychem Technologies"). A leading peel may
@@ -171,7 +187,7 @@ History of removed fabrications (do not reintroduce):
 - **Current IPO board**: Open and Forthcoming are two sections in one tab;
   each card shows measured GMP and subscription together, with its Mainboard/SME
   tag. Sort each section by measured GMP descending. Past listings remain a
-  separate subtab. No separate GMP board should duplicate the same issues.
+  separate section. No separate GMP board should duplicate the same issues.
   Keep cards compact; expanded details hold the full category split. Cross-source
   name joins and subscription joins may
   use only an exact normalized key or one unique ≥10-character partial match;
@@ -257,12 +273,28 @@ History of removed fabrications (do not reintroduce):
 - Robolectric runs on JDK 17 → unit tests pin SDK 35
   (`app/src/test/resources/robolectric.properties` + per-class `@Config`);
   SDK 36 sandboxes require JDK 21. Keep the pin until CI moves to JDK 21.
-- Pre-existing warning (do not "fix" blindly): Room
-  `fallbackToDestructiveMigration()` deprecation in `AppDatabase.kt` —
-  changing migration behavior risks user data; leave for a migration PR.
-- Screenshots: Roborazzi `GreetingScreenshotTest` emits
-  `app/src/test/screenshots/greeting.png`. Full device screenshots need an
-  emulator (not available in this environment).
+- **Room version 2**: register `MIGRATION_1_2`; it only adds
+  `allotment_records.appliedSharesSource TEXT NOT NULL DEFAULT 'LEGACY'`.
+  No destructive fallback is allowed. Historical values must remain saved;
+  do not classify old positive counts as registrar-verified (old manual entries
+  were indistinguishable). `DatabaseMigrationTest` uses the immutable original
+  `schema-v1.sql` fixture and verifies vault/history/holdings/watchlist/paper
+  account/positions/orders plus Room schema validation after upgrade.
+- Navigation: `AppNavigation` owns explicit market/portfolio/ipo routes using
+  Compose Navigation. Fresh start = Market. IPO hides bottom navigation and
+  has Current / Allotment / Past Listings in one row. The Market IPO card must
+  stay near the top and Paper & Signals remains accessible.
+- Save navigation back stacks and section/search/list state. Full PAN input is
+  intentionally not saved in instance state. Notification commands must wait
+  until the navigation graph exists, route to IPO/Allotment, and be consumed;
+  remove the handled intent extra so rotation cannot redirect again.
+- Screenshot recording requires `-Proborazzi.test.record=true`; normal test
+  runs do not rewrite images, so never review stale PNGs as current output.
+  `IpoScreenshotTest`, `AllotmentScreenshotTest`, `AppliedSharesScreenshotTest`
+  cover compact cards, counts and loading/empty states, including 320dp/130%
+  font sizes. `NavigationTest` covers root tabs, IPO/back, independent searches,
+  saved-state restoration and cold/warm notification commands. Real-device
+  install-over-1.0.25 remains a release check when adb has an attached device.
 
 ## 5. Reviewer checklist
 

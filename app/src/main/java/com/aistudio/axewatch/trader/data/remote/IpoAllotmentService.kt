@@ -40,7 +40,8 @@ data class AllotmentQueryResult(
     val status: String,
     val applicationNo: String,
     val applicantName: String,
-    val note: String = ""
+    val note: String = "",
+    val appliedSharesComplete: Boolean = false
 )
 
 /** Transport trouble (HTTP 5xx/429/IO). Never confused with a business
@@ -112,12 +113,13 @@ class IpoAllotmentService(
          * allotments (records skipped as "no shares"). Mirrors the web
          * backend's _num(). Pure function, unit-tested.
          */
-        fun parseShareCount(v: Any?): Int {
-            if (v is Number) return v.toInt()
-            val s = v?.toString()?.replace(",", "")?.trim() ?: return 0
-            if (s.isEmpty() || s.equals("null", ignoreCase = true)) return 0
-            return s.toIntOrNull() ?: s.toDoubleOrNull()?.toInt() ?: 0
+        fun reportedShareCount(v: Any?): Int? {
+            val value = v?.toString()?.replace(",", "")?.trim()?.toBigDecimalOrNull() ?: return null
+            return try { value.intValueExact().takeIf { it >= 0 } } catch (_: ArithmeticException) { null }
         }
+
+        fun parseShareCount(v: Any?): Int = reportedShareCount(v) ?: 0
+
     }
 
     // CookieJar is REQUIRED: MUFG's token endpoint validates the session that
@@ -254,7 +256,7 @@ class IpoAllotmentService(
                 if (result == null) return@withContext if (allotmentDeclared) uncoveredResult(ipoCompanyName, "Maashitla")
                     else pendingResult(ipoCompanyName)
                 return@withContext if (result.status == "ALLOTTED" || allotmentDeclared) result
-                    else pendingResult(ipoCompanyName)
+                    else pendingWithDetails(result, ipoCompanyName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 onSourceResult("allot_maashitla", false, (System.currentTimeMillis() - started).toInt())
@@ -295,9 +297,9 @@ class IpoAllotmentService(
                 onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
                 if (kfinResult.found) return@withContext if (
                     kfinResult.status == "ALLOTTED" || allotmentDeclared
-                ) kfinResult else pendingResult(ipoCompanyName)
+                ) kfinResult else pendingWithDetails(kfinResult, ipoCompanyName)
                 // A negative is only final after the allotment is declared.
-                return@withContext if (allotmentDeclared) kfinResult else pendingResult(ipoCompanyName)
+                return@withContext if (allotmentDeclared) kfinResult else pendingWithDetails(kfinResult, ipoCompanyName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 onSourceResult("allot_kfin", false, (System.currentTimeMillis() - t0).toInt())
@@ -329,7 +331,7 @@ class IpoAllotmentService(
                     val mufgResult = checkMufgAllotment(cleanPan, matchedCompany.id, matchedCompany.name)
                     onSourceResult("allot_mufg", true, (System.currentTimeMillis() - t0).toInt())
                     return@withContext if (mufgResult.status == "ALLOTTED" || allotmentDeclared) mufgResult
-                        else pendingResult(ipoCompanyName)
+                        else pendingWithDetails(mufgResult, ipoCompanyName)
                 } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     onSourceResult("allot_mufg", false, (System.currentTimeMillis() - t0).toInt())
@@ -357,7 +359,7 @@ class IpoAllotmentService(
                     onSourceResult("allot_kfin", true, (System.currentTimeMillis() - t0).toInt())
                     if (kfinResult.found) return@withContext if (
                         kfinResult.status == "ALLOTTED" || allotmentDeclared
-                    ) kfinResult else pendingResult(ipoCompanyName)
+                    ) kfinResult else pendingWithDetails(kfinResult, ipoCompanyName)
                 }
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
@@ -443,19 +445,27 @@ class IpoAllotmentService(
     }
 
     internal fun parseMaashitlaJson(body: String, companyName: String): AllotmentQueryResult {
-        val row = try { JSONObject(body) } catch (_: Exception) {
-            throw AllotmentTransportException("Maashitla malformed result")
+        val rows = try {
+            val value = org.json.JSONTokener(body).nextValue()
+            val array = if (value is JSONArray) value else (value as? JSONObject)?.optJSONArray("data")
+                ?: (value as? JSONObject)?.optJSONArray("records")
+            if (array != null) (0 until array.length()).map { array.getJSONObject(it) }
+            else listOf(value as? JSONObject ?: throw IllegalArgumentException())
+        } catch (_: Exception) { throw AllotmentTransportException("Maashitla malformed result") }
+        // This endpoint is scoped to one company ID. Honor company names too when returned.
+        val relevant = rows.filter {
+            val company = it.optString("company_name", it.optString("Company", ""))
+            company.isBlank() || canonIpoName(company) == canonIpoName(companyName)
         }
-        if (!row.has("shares_alloted") && !row.has("shares_allotted")) {
-            throw AllotmentTransportException("Maashitla missing allotment field")
-        }
-        val applied = parseShareCount(row.opt("shares_applied"))
-        val allotted = parseShareCount(row.opt("shares_alloted") ?: row.opt("shares_allotted"))
-        return AllotmentQueryResult(
-            true, "Maashitla", companyName, applied, allotted,
-            if (allotted > 0) "ALLOTTED" else "NOT_ALLOTTED",
-            "", maskApplicantName(row.optString("name"))
-        )
+        if (relevant.isEmpty()) return notFoundResult(companyName, "No application record found on Maashitla")
+        return aggregateApplications(relevant.map { row ->
+            ApplicationQuantity(
+                row.optString("application_no", row.optString("application_number", "")),
+                reportedShareCount(row.opt("shares_applied")),
+                reportedShareCount(row.opt("shares_alloted") ?: row.opt("shares_allotted")),
+                row.optString("name")
+            )
+        }, "Maashitla", companyName)
     }
 
     private suspend fun checkMufgAllotment(pan: String, companyId: String, companyName: String): AllotmentQueryResult {
@@ -605,46 +615,44 @@ class IpoAllotmentService(
         if (candidates.size > 1 && matchedCompany == null) {
             throw AllotmentTransportException("KFintech company match is ambiguous")
         }
-        var matchedApplied = 0
-        var matchedAllotted = 0
-        var matchedAppNo = ""
-        var matchedName = ""
-        for (i in 0 until root.length()) {
-            val item = root.optJSONObject(i) ?: continue
-            val comp = item.optString("Company", item.optString("company", ""))
-            if (canonIpoName(comp) != matchedCompany) continue
-            val appShares = parseShareCount(
-                if (item.has("App_Shares")) item.get("App_Shares")
-                else if (item.has("app_shares")) item.get("app_shares") else 0
-            )
-            val allShares = parseShareCount(
-                if (item.has("All_Shares")) item.get("All_Shares")
-                else if (item.has("all_shares")) item.get("all_shares") else 0
-            )
-            if (appShares <= 0 && allShares <= 0) continue
-            matchedApplied += appShares
-            matchedAllotted += allShares
-            if (matchedAppNo.isEmpty()) {
-                matchedAppNo = item.optString("Appln_No", item.optString("appln_no", ""))
-                matchedName = item.optString("Name", item.optString("name", ""))
+        val rows = (0 until root.length()).mapNotNull { root.optJSONObject(it) }
+            .filter { canonIpoName(it.optString("Company", it.optString("company", ""))) == matchedCompany }
+            .map { item ->
+                ApplicationQuantity(
+                    item.optString("Appln_No", item.optString("appln_no", "")),
+                    reportedShareCount(item.opt("App_Shares") ?: item.opt("app_shares")),
+                    reportedShareCount(item.opt("All_Shares") ?: item.opt("all_shares")),
+                    item.optString("Name", item.optString("name", ""))
+                )
             }
-        }
+        if (rows.isEmpty()) return notFoundResult(requestedCompanyName, "No matching bids found on KFintech")
+        return aggregateApplications(rows, "KFintech", requestedCompanyName)
+    }
 
-        if (matchedApplied > 0 || matchedAllotted > 0) {
-            val isAllotted = matchedAllotted > 0
-            return AllotmentQueryResult(
-                found = true,
-                source = "KFintech",
-                companyName = requestedCompanyName,
-                sharesApplied = matchedApplied,
-                sharesAllotted = matchedAllotted,
-                status = if (isAllotted) "ALLOTTED" else "NOT_ALLOTTED",
-                applicationNo = matchedAppNo,
-                applicantName = maskApplicantName(matchedName),
-                note = if (isAllotted) "Allotted $matchedAllotted shares" else "Bid processed - Zero shares allotted"
-            )
+    private data class ApplicationQuantity(val id: String, val applied: Int?, val allotted: Int?, val name: String)
+
+    /** Same application can be repeated by a registrar. Conflicting duplicates are not safe totals. */
+    private fun aggregateApplications(rows: List<ApplicationQuantity>, source: String, company: String): AllotmentQueryResult {
+        val distinct = rows.distinctBy { listOf(it.id, it.applied, it.allotted) }
+        if (distinct.any { it.allotted == null } ||
+            distinct.filter { it.id.isNotBlank() }.groupBy { it.id }.any { it.value.size > 1 }) {
+            throw AllotmentTransportException("$source incomplete or conflicting application records")
         }
-        return notFoundResult(requestedCompanyName, "No matching bids found on KFintech")
+        val complete = distinct.all { it.applied != null && it.applied >= it.allotted!! } &&
+            (distinct.size == 1 || distinct.all { it.id.isNotBlank() })
+        val applied = if (complete) distinct.sumOf { it.applied!!.toLong() } else 0L
+        val allotted = distinct.sumOf { it.allotted!!.toLong() }
+        if (applied > Int.MAX_VALUE || allotted > Int.MAX_VALUE) {
+            throw AllotmentTransportException("$source quantity outside supported range")
+        }
+        return AllotmentQueryResult(
+            found = true, source = source, companyName = company,
+            sharesApplied = applied.toInt(), sharesAllotted = allotted.toInt(),
+            status = if (allotted > 0) "ALLOTTED" else "NOT_ALLOTTED",
+            applicationNo = distinct.map { it.id }.filter { it.isNotBlank() }.joinToString(", "),
+            applicantName = maskApplicantName(distinct.first().name),
+            appliedSharesComplete = complete
+        )
     }
 
     private fun encryptMufgToken(token: String): String {
@@ -701,78 +709,49 @@ class IpoAllotmentService(
     // Internal (not private) for white-box unit tests: the XML contract is
     // the heart of correctness — a misread tag once flipped outcomes.
     internal fun parseMufgSearchXml(xml: String, fallbackCompanyName: String): AllotmentQueryResult {
-        var applied = 0
-        var allotted = 0
-        var appNo = ""
-        var applicantName = ""
-        var errorMsg = ""
-
+        val rows = mutableListOf<Map<String, String>>()
         try {
-            val factory = XmlPullParserFactory.newInstance()
-            val parser = factory.newPullParser()
+            val parser = XmlPullParserFactory.newInstance().newPullParser()
             parser.setInput(StringReader(xml))
-
-            var eventType = parser.eventType
-            var currentTag = ""
-
-            while (eventType != XmlPullParser.END_DOCUMENT) {
-                when (eventType) {
+            var row: MutableMap<String, String>? = null
+            var tag = ""
+            while (parser.eventType != XmlPullParser.END_DOCUMENT) {
+                when (parser.eventType) {
                     XmlPullParser.START_TAG -> {
-                        currentTag = parser.name
+                        tag = parser.name.uppercase()
+                        if (tag == "TABLE") row = mutableMapOf()
                     }
-                    XmlPullParser.TEXT -> {
-                        val text = parser.text.trim()
-                        // Counts may arrive comma-formatted: tolerant parse
-                        // (same reason as KFin parseShareCount).
-                        fun tolerantCount(raw: String, prev: Int): Int =
-                            raw.toIntOrNull()
-                                ?: raw.replace(",", "").toIntOrNull()
-                                ?: raw.replace(",", "").toDoubleOrNull()?.toInt()
-                                ?: prev
-                        when (currentTag.uppercase()) {
-                            "SHARES" -> applied = tolerantCount(text, applied)
-                            "ALLOT" -> allotted = tolerantCount(text, allotted)
-                            "PEMNDG" -> appNo = text
-                            "NAME1" -> applicantName = text
-                            "MSG" -> errorMsg = text
-                        }
+                    XmlPullParser.TEXT -> if (row != null && tag != "TABLE") {
+                        row[tag] = row[tag].orEmpty() + parser.text
                     }
                     XmlPullParser.END_TAG -> {
-                        currentTag = ""
+                        if (parser.name.equals("Table", true)) { row?.let { rows.add(it) }; row = null }
+                        tag = ""
                     }
                 }
-                eventType = parser.next()
+                parser.next()
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "XML parse error in MUFG search: ${e.javaClass.simpleName}")
+        } catch (_: Exception) {
             throw AllotmentTransportException("MUFG search XML malformed")
         }
-
-        if (errorMsg.isNotBlank() && applied == 0) {
-            val noRecord = listOf("no record", "no application", "not found", "no bid")
-                .any { it in errorMsg.lowercase() }
-            if (!noRecord) throw AllotmentTransportException("MUFG search returned an error")
-            return notFoundResult(fallbackCompanyName, "No application record found on MUFG")
+        val relevant = rows.filter { row ->
+            val company = row["COMPANY"] ?: row["COMPANYNAME"]
+            company == null || canonIpoName(company) == canonIpoName(fallbackCompanyName)
         }
-
-        if (applied > 0 || allotted > 0) {
-            val isAllotted = allotted > 0
-            return AllotmentQueryResult(
-                found = true,
-                source = "MUFG Intime",
-                companyName = fallbackCompanyName,
-                sharesApplied = applied,
-                sharesAllotted = allotted,
-                status = if (isAllotted) "ALLOTTED" else "NOT_ALLOTTED",
-                // Real application number or blank (UI renders "—"). Never
-                // invent one: a fabricated number looks like your real data.
-                applicationNo = appNo,
-                applicantName = maskApplicantName(applicantName),
-                note = if (isAllotted) "Allotted $allotted shares" else "Applied for $applied shares - Not allotted"
-            )
+        val applications = mutableListOf<ApplicationQuantity>()
+        for (row in relevant) {
+            val msg = row["MSG"].orEmpty().trim()
+            if (msg.isNotEmpty()) {
+                val noRecord = listOf("no record", "no application", "not found", "no bid").any { it in msg.lowercase() }
+                if (!noRecord) throw AllotmentTransportException("MUFG search returned an error")
+                continue
+            }
+            if (row.isEmpty()) continue
+            applications.add(ApplicationQuantity(row["PEMNDG"].orEmpty().trim(),
+                reportedShareCount(row["SHARES"]), reportedShareCount(row["ALLOT"]), row["NAME1"].orEmpty()))
         }
-
-        return notFoundResult(fallbackCompanyName, "No bid records found on MUFG")
+        if (applications.isEmpty()) return notFoundResult(fallbackCompanyName, "No application record found on MUFG")
+        return aggregateApplications(applications, "MUFG Intime", fallbackCompanyName)
     }
 
     // Internal for unit tests: mis-attribution sends one IPO's result to
@@ -793,6 +772,10 @@ class IpoAllotmentService(
             ipoNamesMatch(it.name, ipoName) || ipoNamesMatch(it.name, ipoSymbol)
         }.singleOrNull()
     }
+
+    private fun pendingWithDetails(result: AllotmentQueryResult, name: String): AllotmentQueryResult =
+        if (result.found) result.copy(status = "RESULTS_NOT_OUT", note = "Allotment publication is not confirmed yet")
+        else pendingResult(name)
 
     private fun notFoundResult(companyName: String, note: String, status: String = "NOT_APPLIED"): AllotmentQueryResult {
         return AllotmentQueryResult(

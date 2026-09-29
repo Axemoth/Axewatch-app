@@ -28,23 +28,30 @@ stay unavailable until a later refresh.
 
 ## Key Features & Architecture
 
-Axewatch is organized into **3 core tabs**:
+Fresh launches open **Market**. The bottom navigation contains only **Market**
+and **Portfolio**. The IPOs card near the top of Market opens a dedicated full-screen
+page with its own back arrow and refresh button:
 
 ```
-Axewatch App
-├── 1. IPO (IPOs, Live GMP & Subscription + Direct Allotment Checker)
-├── 2. Stocks (Market Dashboard + Virtual Paper Trading)
-└── 3. Portfolio (Holdings Valuation, Mutual Funds & Asset Allocation)
+Market (market overview, Paper & Signals)
+  IPOs → Current | Allotment | Past Listings
+Portfolio (holdings, mutual funds, allocation, watchlist)
 ```
+
+IPO has one section row. Current keeps Open and Forthcoming issues together with
+GMP, subscription and Mainboard/SME labels. Back returns to Market. Selected
+sections, searches and scroll positions are saved across navigation and Android
+state restoration. Notification taps open IPO → Allotment once, including when
+the app starts from a notification.
 
 ---
 
-### 1. IPO Tab
+### IPO page
 
 #### A. Current IPOs and GMP
 - **Active & Forthcoming Issues**: Real-time Mainboard and SME IPO issues fetched from live aggregators.
 - **One current board**: Open and Forthcoming are separate sections in the same view. Cards show measured GMP and subscription side by side, with a Mainboard/SME tag; each section is sorted by GMP. Missing data shows `—`.
-- **Compact cards**: Long company names get their own full-width lines; category and status stay readable on narrow phones. Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own subtab. A loading state distinguishes slow live feeds from an empty board.
+- **Compact cards**: Long company names get their own full-width lines; category and status stay readable on narrow phones. Tap **More Details** for registrar, dates, the full subscription breakdown, and the calculator. Past listings have their own section. A loading state distinguishes slow live feeds from an empty board.
 - **Past listings**: Issue, listing, and current prices come from their distinct source columns. Missing prices display `—` rather than a copied issue price.
 - **Live Subscription Tracking**: SEBI subscription splits parsed in real-time across:
   - **QIB** (Qualified Institutional Buyers)
@@ -72,13 +79,16 @@ Axewatch App
 - **Registrar Directory**: Dynamic 43+ company attribution across registrars and declared basis-of-allotment dates.
 - **Family PAN Vault**: On-device Room storage for multiple family PANs with 1-tap bulk checking. Device storage encryption depends on Android settings.
 - **Strict PII Protection**: Full PAN numbers are stored strictly on-device in Room database, masked everywhere (`AB*****F`), and never logged or exposed.
-- **Manual Allotment Journal**: Hand-log outcomes checked on official portals; Bigshare requires CAPTCHA.
+- **Share quantities per PAN**: Results show **Applied shares** and **Allotted shares** in Indian number formatting. These are shares, not lots. Registrar-reported quantities are totaled across distinct applications for that PAN and issue; duplicate applications are excluded. Missing or incomplete applied quantities show **Not reported**, without changing the outcome.
+- **Manual Allotment Journal**: Hand-log outcomes checked on official portals; Bigshare requires CAPTCHA. Applied shares are optional and independent of allotted shares. Enter a total only when the official result reports it.
+- **Existing history**: Room database version 2 adds applied-count provenance without deleting any user tables. Existing saved values are retained and labeled **Saved count unverified**, since earlier manual entries may have copied the allotted count.
+- **Refresh details**: Legacy or missing counts have an explicit refresh action. A saved PAN is used only if its masked match is unique; otherwise enter the PAN used for that result. Failed or conflicting checks preserve the saved final outcome and known quantities. Refreshing counts does not trigger mass checks or reissue declaration alerts.
 - **Focused allotment list**: Open issues and issues closed within 30 days only. Saved older result history remains visible. Saved-vault PANs are checked when results are due, with distinct allotted, not allotted, and no-application alerts where the registrar supports an automated check.
 - **Check first**: The issue selector, saved holder chips, PAN field, and check actions lead the Allotment screen; source diagnostics and result history follow them.
 
 ---
 
-### 2. Stocks Tab
+### Market tab
 
 #### A. Market Dashboard
 - **Live Indices**: NIFTY 50, BSE SENSEX, BANKNIFTY, NIFTY IT, NIFTY AUTO, NIFTY METAL, INDIA VIX.
@@ -97,7 +107,7 @@ Axewatch App
 
 ---
 
-### 3. Portfolio Tab
+### Portfolio tab
 
 - **Multi-Asset Holdings**: Stock equity holdings and Mutual Fund units stored in local Room SQLite database.
 - **Live Valuation**: Instant valuation recalculation against real-time market quotes and NAVs.
@@ -110,7 +120,7 @@ Axewatch App
 
 - **UI Toolkit**: Jetpack Compose, Material 3, Compose Navigation & Icons
 - **Language & Coroutines**: Kotlin 2.0+, Kotlin Coroutines, StateFlow, Channel
-- **Local Persistence**: Room Database (SQLite) with encrypted local storage
+- **Local Persistence**: Room Database (SQLite), stored on the device; no app-level vault encryption
 - **Network & Parsing**: OkHttpClient, JavaNetCookieJar, Java Crypto (AES-CBC), XMLPullParser, org.json
 - **Build System**: Gradle 8.11+, Android Gradle Plugin 8.7+
 - **Compatibility**: Android 8.0 (API 26) through Android 15 (API 35)
@@ -156,12 +166,29 @@ For GitHub Actions, configure these repository secrets once:
 
 The workflow fails rather than publishing an APK when signing secrets are
 missing. Each push to `main` then builds and uploads the signed
-`Axewatch-update-apk` artifact. Download its APK and open it on the phone to
+`Axewatch-update-apk` artifact and `Axewatch-ui-verification` screenshot artifact.
+CI also requires a version code above the distributed 1.0.25 build. Download its APK and open it on the phone to
 install the update.
 
 ### Prerequisites
 - JDK 17 or higher
 - Android SDK 36 with build-tools 36.0.0
+
+### Regression checks
+
+Run `testDebugUnitTest` for registrar quantity fixtures, missing/duplicate/multiple
+applications, status separation, safe detail merging, unique vault matches,
+notification routing, navigation/state restoration, and the v1→v2 Room migration.
+The migration test seeds all seven user tables and verifies their data after Room
+opens and validates the upgraded database. `schema-v1.sql` is the original
+Room-generated v1 schema; keep it unchanged as the upgrade fixture.
+
+Run `testDebugUnitTest -Proborazzi.test.record=true` to generate fresh UI images
+under `app/build/reports/`, including 320dp layouts at 130% font size. Review
+Current/Past, Allotment, loading/empty states, and applied-count/error states.
+On a connected test phone or emulator, install the signed release over 1.0.25
+with `adb install -r <apk>` and verify navigation, notification cold/warm starts,
+rotation and saved user data. Never uninstall as part of an update test.
 
 ### Build Commands
 ```bash

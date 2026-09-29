@@ -55,6 +55,12 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.aistudio.axewatch.trader.data.model.uniqueSavedPan
+import com.aistudio.axewatch.trader.data.local.entity.maskMatches
+import com.aistudio.axewatch.trader.data.model.validManualQuantities
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -117,13 +123,15 @@ fun AllotmentScreen(
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit,
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
     onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
+    onRefreshDetails: (AllotmentRecordEntity, String) -> Unit = { _, _ -> },
     checkBusy: Boolean = false,
-    onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String) -> Unit = { _, _, _, _, _ -> },
+    onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String, applied: Int?) -> Unit = { _, _, _, _, _, _ -> },
     onSavePan: (pan: String, name: String, rel: String) -> Unit,
     onDeletePan: (PanVaultEntity) -> Unit,
     onDeleteRecord: (AllotmentRecordEntity) -> Unit = {},
     onClearHistory: () -> Unit = {},
     initialSelectedSymbol: String = "",
+    onInitialSelectionHandled: () -> Unit = {},
     alertsEnabled: Boolean = false,
     onToggleAlerts: (Boolean) -> Unit = {},
     isLoading: Boolean = false,
@@ -131,7 +139,7 @@ fun AllotmentScreen(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
-    var selectedIpoSymbol by remember(initialSelectedSymbol) { mutableStateOf(initialSelectedSymbol) }
+    var selectedIpoSymbol by rememberSaveable { mutableStateOf(initialSelectedSymbol) }
     // Smart default: most recent results-declared issue first, then most
     // recent closed, then whatever leads the feed. Re-evaluates as the
     // issue list loads — the old firstOrNull() froze on the first frame
@@ -139,12 +147,15 @@ fun AllotmentScreen(
     LaunchedEffect(ipos, initialSelectedSymbol) {
         if (initialSelectedSymbol.isNotBlank() && ipos.any { it.symbol == initialSelectedSymbol }) {
             selectedIpoSymbol = initialSelectedSymbol
+            onInitialSelectionHandled()
         } else if (selectedIpoSymbol.isBlank() || ipos.none { it.symbol == selectedIpoSymbol }) {
             selectedIpoSymbol = ipos
                 .sortedWith(compareBy({ allotPickerSection(it) }, { -ipoRecencyKey(it) }))
                 .firstOrNull()?.symbol ?: ""
         }
     }
+    var refreshRecord by remember { mutableStateOf<AllotmentRecordEntity?>(null) }
+    var refreshPan by remember { mutableStateOf("") }
     var panInput by remember { mutableStateOf("") }
     var panVisible by remember { mutableStateOf(false) }
     var holderInput by remember { mutableStateOf("") }
@@ -155,8 +166,8 @@ fun AllotmentScreen(
     var manualRecordIpoSymbol by remember { mutableStateOf("") }
     var manualRecordPan by remember { mutableStateOf("") }
 
-    var recordFilterTab by remember { mutableStateOf(0) }
-    var ipoSearchQuery by remember { mutableStateOf("") }
+    var recordFilterTab by rememberSaveable { mutableStateOf(0) }
+    var ipoSearchQuery by rememberSaveable { mutableStateOf("") }
 
     val currentIpo = ipos.find { it.symbol == selectedIpoSymbol } ?: ipos.firstOrNull()
 
@@ -191,7 +202,7 @@ fun AllotmentScreen(
 
     LazyColumn(
         modifier = modifier
-            .fillMaxSize()
+            .fillMaxSize().testTag("allotment_screen")
             .background(AxeDarkBg),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 80.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -1213,7 +1224,7 @@ fun AllotmentScreen(
             items(filteredRecords, key = { it.id }) { record ->
                 val time = SimpleDateFormat("dd MMM, HH:mm", Locale.ENGLISH).format(Date(record.checkedAt))
                 val (badgeBg, badgeColor, badgeLabel) = when (record.status) {
-                    "ALLOTTED" -> Triple(AxeGreenSubtle, AxeEmeraldGreen, "ALLOTTED (${record.sharesAllotted} sh)")
+                    "ALLOTTED" -> Triple(AxeGreenSubtle, AxeEmeraldGreen, "ALLOTTED")
                     "NOT_ALLOTTED" -> Triple(AxeRedSubtle, AxeRoseRed, "NOT ALLOTTED")
                     "NOT_APPLIED" -> Triple(AxeDarkSurfaceElevated, AxeTextSecondary, "NOT APPLIED")
                     "RESULTS_NOT_OUT", "AWAITING" -> Triple(AxeAmber.copy(alpha = 0.18f), AxeAmber, "RESULTS NOT OUT")
@@ -1224,20 +1235,19 @@ fun AllotmentScreen(
 
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth()
+                        .fillMaxWidth().testTag("allotment_result_${record.id}")
                         .clip(RoundedCornerShape(10.dp))
                         .background(AxeDarkSurface)
                         .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
                         .padding(12.dp)
                 ) {
                     Column {
-                        Row(
+                        Column(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                Column {
                                     Text(record.ipoName, color = AxeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text(record.maskedPan, color = AxeTextSecondary, fontSize = 11.sp)
@@ -1289,6 +1299,18 @@ fun AllotmentScreen(
                             }
                         }
 
+                        AllotmentShareCounts(record)
+                        if (record.appliedSharesSource in setOf("LEGACY", "UNKNOWN")) {
+                            TextButton(
+                                enabled = !checkBusy,
+                                onClick = {
+                                    val saved = uniqueSavedPan(record, savedPans)
+                                    if (saved != null) onRefreshDetails(record, saved.panNumber)
+                                    else { refreshPan = ""; refreshRecord = record }
+                                }
+                            ) { Text("Refresh details") }
+                        }
+
                         if (record.status == "MANUAL_CHECK_REQUIRED" || record.status == "UNCOVERED") {
                             Spacer(modifier = Modifier.height(8.dp))
                             val portalLink = findMatchingRegistrarLink(record.registrar, registrarLinks)
@@ -1306,7 +1328,7 @@ fun AllotmentScreen(
                                 if (portalUrl.isNotBlank()) {
                                     OutlinedButton(
                                         onClick = {
-                                            val vaultPan = savedPans.find { it.maskedPan == record.maskedPan }?.panNumber ?: ""
+                                            val vaultPan = uniqueSavedPan(record, savedPans)?.panNumber ?: ""
                                             if (vaultPan.isNotBlank()) {
                                                 clipboardManager.setText(AnnotatedString(vaultPan))
                                             }
@@ -1333,7 +1355,7 @@ fun AllotmentScreen(
                                 Button(
                                     onClick = {
                                         manualRecordIpoSymbol = record.ipoSymbol
-                                        manualRecordPan = savedPans.find { it.maskedPan == record.maskedPan }?.panNumber ?: ""
+                                        manualRecordPan = uniqueSavedPan(record, savedPans)?.panNumber ?: ""
                                         showManualRecordDialog = true
                                     },
                                     shape = RoundedCornerShape(6.dp),
@@ -1529,13 +1551,39 @@ fun AllotmentScreen(
         )
     }
 
+    refreshRecord?.let { record ->
+        val valid = IpoAllotmentService.isValidPan(refreshPan) &&
+            maskMatches(IpoAllotmentService.maskPan(refreshPan), record.maskedPan)
+        AlertDialog(
+            onDismissRequest = { refreshRecord = null; refreshPan = "" },
+            title = { Text("Refresh applied shares") },
+            text = {
+                Column {
+                    Text("Enter the PAN used for ${record.ipoName} (${record.maskedPan}). The vault match is missing or ambiguous.")
+                    OutlinedTextField(value = refreshPan, onValueChange = { refreshPan = it.trim().uppercase() },
+                        label = { Text("PAN") }, singleLine = true,
+                        visualTransformation = PasswordVisualTransformation())
+                }
+            },
+            confirmButton = {
+                TextButton(enabled = valid && !checkBusy, onClick = {
+                    onRefreshDetails(record, refreshPan); refreshRecord = null; refreshPan = ""
+                }) { Text("Refresh details") }
+            },
+            dismissButton = { TextButton(onClick = { refreshRecord = null; refreshPan = "" }) { Text("Cancel") } }
+        )
+    }
+
     // Modal: Record Manual Allotment Status
     if (showManualRecordDialog) {
-        val targetIpo = remember(manualRecordIpoSymbol, selectedIpoSymbol, ipos) {
-            if (manualRecordIpoSymbol.isNotBlank()) {
-                ipos.find { it.symbol == manualRecordIpoSymbol } ?: currentIpo
-            } else {
-                currentIpo
+        val targetIpo = remember(manualRecordIpoSymbol, selectedIpoSymbol, ipos, records) {
+            val symbol = manualRecordIpoSymbol.ifBlank { selectedIpoSymbol }
+            val issue = ipos.firstOrNull { it.symbol == symbol }
+            val saved = records.firstOrNull { it.ipoSymbol == symbol }
+            when {
+                issue != null -> issue.symbol to issue.companyName
+                saved != null -> saved.ipoSymbol to saved.ipoName
+                else -> null
             }
         }
         var mPan by remember {
@@ -1549,11 +1597,15 @@ fun AllotmentScreen(
         }
         var mStatus by remember { mutableStateOf("RESULTS_NOT_OUT") }
         var mShares by remember { mutableStateOf("") }
+        var mApplied by remember { mutableStateOf("") }
         var mAppNo by remember { mutableStateOf("") }
 
         val panValid = IpoAllotmentService.isValidPan(mPan)
-        val sharesValid = mStatus != "ALLOTTED" || (mShares.toIntOrNull() ?: 0) > 0
-        val canSave = panValid && sharesValid && targetIpo != null
+        val applied = IpoAllotmentService.reportedShareCount(mApplied)
+        val allotted = if (mStatus == "ALLOTTED") IpoAllotmentService.reportedShareCount(mShares) ?: 0 else 0
+        val sharesValid = validManualQuantities(mStatus, allotted, applied)
+        val appliedValid = mApplied.isBlank() || applied != null
+        val canSave = panValid && sharesValid && appliedValid && targetIpo != null
 
         AlertDialog(
             onDismissRequest = {
@@ -1566,8 +1618,8 @@ fun AllotmentScreen(
                 Text("Record Allotment Status Manually", color = AxeTextPrimary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("IPO: ${targetIpo?.companyName ?: "Selected Issue"}", color = AxePrimaryCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("IPO: ${targetIpo?.second ?: "Selected Issue"}", color = AxePrimaryCyan, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
 
                     if (savedPans.isNotEmpty()) {
                         LazyRow(
@@ -1681,6 +1733,16 @@ fun AllotmentScreen(
                     }
 
                     OutlinedTextField(
+                        value = mApplied,
+                        onValueChange = { mApplied = it },
+                        label = { Text("Applied shares (optional)") },
+                        supportingText = { Text("Total shares for this PAN, not lots. Leave blank if not reported.") },
+                        isError = !appliedValid || !sharesValid,
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth().testTag("manual_applied_shares")
+                    )
+
+                    OutlinedTextField(
                         value = mAppNo,
                         onValueChange = { mAppNo = it },
                         label = { Text("Application Number (Optional)") },
@@ -1704,8 +1766,8 @@ fun AllotmentScreen(
                             // Mask via the single compliant formatter — the
                             // inline "take(5)" copy leaked 5 PAN characters.
                             val masked = IpoAllotmentService.maskPan(mPan)
-                            val shares = if (mStatus == "ALLOTTED") mShares.toIntOrNull() ?: 0 else 0
-                            onRecordManualAllotment(masked, targetIpo.symbol, mStatus, shares, mAppNo)
+                            val shares = allotted
+                            onRecordManualAllotment(masked, targetIpo.first, mStatus, shares, mAppNo, applied)
                             showManualRecordDialog = false
                             manualRecordIpoSymbol = ""
                             manualRecordPan = ""
