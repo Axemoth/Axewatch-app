@@ -96,8 +96,11 @@ fun IpoScreen(
     registrarLinks: List<RegistrarLink> = emptyList(),
     regDir: Map<String, DirectoryEntry> = emptyMap(),
     checkBusy: Boolean = false,
+    checkProgress: String = "",
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit = { _, _, _ -> },
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
+    onCheckSelectedAllotment: (String, IpoIssue, String) -> Unit = { pan, issue, holder -> onCheckAllotment(pan, issue.symbol, holder) },
+    onCheckSelectedBulk: (IpoIssue) -> Unit = { onCheckBulkAllotment(it.symbol) },
     onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
     onRefreshDetails: (AllotmentRecordEntity, String) -> Unit = { _, _ -> },
     onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String, applied: Int?) -> Unit = { _, _, _, _, _, _ -> },
@@ -316,8 +319,11 @@ fun IpoScreen(
                 registrarLinks = registrarLinks,
                 regDir = regDir,
                 checkBusy = checkBusy,
+                checkProgress = checkProgress,
                 onCheckAllotment = onCheckAllotment,
                 onCheckBulkAllotment = onCheckBulkAllotment,
+                onCheckSelectedAllotment = onCheckSelectedAllotment,
+                onCheckSelectedBulk = onCheckSelectedBulk,
                 onRetryRecord = onRetryRecord,
                 onRefreshDetails = onRefreshDetails,
                 onRecordManualAllotment = onRecordManualAllotment,
@@ -420,7 +426,7 @@ private fun IpoIssueCard(
                 Column(horizontalAlignment = Alignment.End) {
                     Text("GMP", color = AxeTextMuted, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     Text(
-                        if (ipo.gmpAmount != 0.0) "${if (ipo.gmpAmount > 0) "+" else ""}₹${ipo.gmpAmount.toInt()}" else "—",
+                        if (ipo.gmpReported) "${if (ipo.gmpAmount > 0) "+" else ""}₹${ipo.gmpAmount.toInt()}" else "—",
                         color = if (ipo.gmpAmount > 0) AxeEmeraldGreen else AxeTextPrimary,
                         fontSize = 13.sp, fontWeight = FontWeight.Bold
                     )
@@ -812,7 +818,7 @@ private fun GmpBoardCard(
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                val gmpText = if (gmp.gmpAmount > 0) "+₹${gmp.gmpAmount.toInt()}" else "₹${gmp.gmpAmount.toInt()}"
+                val gmpText = if (!gmp.gmpReported) "—" else if (gmp.gmpAmount > 0) "+₹${gmp.gmpAmount.toInt()}" else "₹${gmp.gmpAmount.toInt()}"
                 Text(
                     text = gmpText,
                     color = trendColor,
@@ -825,7 +831,7 @@ private fun GmpBoardCard(
                         .background(if (isPositive) AxeGreenSubtle else AxeDarkSurfaceElevated)
                         .padding(horizontal = 8.dp, vertical = 3.dp)
                 ) {
-                    val pctText = if (gmp.gmpPercent > 0) {
+                    val pctText = if (!gmp.gmpReported || gmp.issuePrice <= 0) "—" else if (gmp.gmpPercent > 0) {
                         "+${gmp.gmpPercent}%"
                     } else if (gmp.gmpPercent < 0) {
                         "${gmp.gmpPercent}%"

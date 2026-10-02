@@ -320,3 +320,21 @@ History of removed fabrications (do not reintroduce):
 - [ ] `gradle testDebugUnitTest assembleDebug` green; new logic has unit tests
 - [ ] Scheduler/pacing/budget unchanged or justified; no new NSE call volume
 - [ ] `debug.keystore`, `.env`, `build/` never committed
+
+## 6. October 2026 audit regression rules
+
+- Never reintroduce fixed mutual fund returns, AUM, expense ratios, allocation or risk ratings. MFAPI supplies NAV history and scheme metadata. Unsupported metrics are nullable; published NAV date must remain visible. Derive CAGR only from a dated record at/before the anniversary within seven days. Sparse history cannot create a return. Keep NAV precision for valuation.
+- MFAPI raw category names do not equal the filter labels. Normalize categories, including Large & Mid Cap, without merging them into Large Cap. Use scheme 120251 for the current ICICI aggressive hybrid direct-growth fund; 120286 is empty. Publish funds as they arrive with bounded concurrency and preserve earlier successful funds during partial outages.
+- Yahoo daily bars may include a null future/holiday row after the last traded bar. Find the previous session relative to regularMarketTime using timestamps and exchange offset; never use chartPreviousClose for a multi-day range or blindly skip the final array element.
+- InvestorGain GMP cells contain trend counters after the amount. A placeholder such as `-- (0.00%) 0 down / 0 up` has no reported GMP. Numeric zero and negative amounts ARE reported values. Preserve gmpReported through joins and rendering; do not replace them with a positive fallback.
+- IPOWatch now has mixed Mainboard/SME rows with status `(O)/(U)/(C)/(A)/(L)` inside the name, followed by a segment tag. Parse each row's tag; do not assign all rows the first table's segment. Keep compatibility with older separate tables. Fixtures captured 2026-10-03 pin both providers' observed structures.
+- Set the foreground allotment busy flag before launching a coroutine. Disable single/bulk checks together; show completed/total progress. Preserve cancellation and continue other applicants after a per-applicant lookup failure. Full PANs must never appear in progress or errors. Do not silently substitute the first saved PAN.
+- Keep results immediately below the check form and support tools expandable. Vault copy must say PANs are saved locally and sent to the appropriate registrar when checked; do not claim encryption or never-uploaded storage.
+- Use Cameo `https://ipostatus1.cameoindia.com/` (the old host no longer resolves) and Beetal `https://beetal.in/investor-services/#IPO_Allotment_Status`. NSE remains an official browser handoff; request timeouts do not justify marking a PAN not-applied. Health reflects the latest call, not whether any call ever succeeded.
+- Run FundAndQuoteRegressionTest, IpoGmpTablesTest, AllotmentBatchTest and AllotmentFlowUiTest with the full existing suite, including registrar status/quantity, notification/navigation and Room migration checks. Record/review allotment-ready and allotment-family-progress screenshots at 320dp/130% fonts before release.
+
+- Portfolio valuation and concentration must combine stock quotes with fund NAVs by scheme code. Fetch held fund codes as well as popular schemes. Normalize legacy `mf`/`MUTUAL_FUND` asset types on read; do not mutate costs, quantities or IDs. NAVs are unit prices, not equity quotes.
+
+- Opening a stock must refresh its quote even when a cached positive price exists. Keep the on-demand quote cache at 60 seconds and preserve the selected-stock generation guard; do not bulk-fetch index constituents or discard a known price when refresh fails.
+
+IPO checks carry both the selected company name and symbol. Generated short symbols can collide: never choose the first matching company for an ambiguous symbol. Picker keys and result-declaration badges include the company name; regression tests cover selecting the correct registrar/company in a collision.

@@ -214,3 +214,15 @@ The updatable release APK is at
 ## License
 
 Private repository. All rights reserved.
+
+## October 2026 loading and allotment audit
+
+The allotment form keeps applicant selection explicit. Choose a vault holder or enter a PAN, then check one applicant or all saved PANs. While a check runs, the buttons are disabled and family progress is shown. Results appear directly below the form; PAN management, alerts and official portals are under expandable tools. A failed applicant does not stop later checks or become a not-applied verdict. PAN inputs are not saved in Android instance state.
+
+Mutual funds load independently with at most three requests at once. Fund categories match the filter chips, and the retired hybrid scheme code has been replaced. NAV dates are displayed. Annualized 1/3/5-year returns come from dated NAV history; insufficient history stays unknown. Fees, AUM, allocation and risk ratings are unknown when the NAV provider does not report them. Previously hard-coded fund metrics have been removed.
+
+GMP parsing supports the October mixed Mainboard/SME IPOWatch table and InvestorGain trend counters. Reported zero and negative premiums remain valid; a missing premium stays unavailable. Fund holdings use published NAVs for valuation and allocation, including held schemes outside the explorer list. Legacy `mf` asset types are normalized on read without changing stored quantities or costs. Daily stock/index changes use the previous actual trading session, skipping holiday/future placeholder bars. Constituent loading can be retried in the index dialog without increasing the bulk quote budget.
+
+Official portals: Cameo now uses https://ipostatus1.cameoindia.com/; Beetal uses its current investor-services page. The other registrar/exchange URLs remain official. Public-page reachability does not prove a PAN-specific answer or a CAPTCHA submission; use the matching portal for manual registrars.
+
+IPO checks carry both the selected company name and symbol. Generated short symbols can collide: never choose the first matching company for an ambiguous symbol. Picker keys and result-declaration badges include the company name; regression tests cover selecting the correct registrar/company in a collision.

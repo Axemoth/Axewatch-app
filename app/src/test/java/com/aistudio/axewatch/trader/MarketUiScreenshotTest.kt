@@ -26,6 +26,28 @@ import org.robolectric.annotation.GraphicsMode
 class MarketUiScreenshotTest {
     @get:Rule val compose = createComposeRule()
 
+    @Test
+    @Config(qualifiers = "w320dp-h800dp-mdpi", sdk = [35])
+    fun fundDetailsKeepMissingMetricsReadableAtLargeFont() {
+        val fund = com.aistudio.axewatch.trader.data.model.MutualFundScheme(
+            "42", "Example Flexi Cap Fund - Direct Plan - Growth", "Example AMC", "Flexi Cap",
+            nav = 100.1234, navPrev = null, dayChangePercent = null, navDate = "01-10-2026")
+        compose.setContent {
+            AxewatchTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    androidx.compose.ui.platform.LocalDensity provides androidx.compose.ui.unit.Density(
+                        androidx.compose.ui.platform.LocalDensity.current.density, 1.3f)) {
+                    com.aistudio.axewatch.trader.ui.dialogs.MutualFundDetailModal(
+                        fund, onDismiss = {}, onAddToPortfolio = { _, _, _, _ -> })
+                }
+            }
+        }
+        compose.onNodeWithText("Change unavailable").assertExists()
+        compose.onNodeWithText("NAV 01-10-2026").assertExists()
+        compose.onNodeWithText("Risk: unknown").assertExists()
+        compose.onRoot().captureRoboImage(filePath = "build/reports/fund-details-large-font.png")
+    }
+
     @Test fun indexMembershipShowsUnquotedRowsWithoutInventedPrices() {
         compose.setContent {
             AxewatchTheme {

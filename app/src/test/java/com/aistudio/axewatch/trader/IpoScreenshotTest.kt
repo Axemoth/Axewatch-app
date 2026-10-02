@@ -32,7 +32,7 @@ class IpoScreenshotTest {
     @Test fun ipoTabsRenderCompactCards() {
         val issue = IpoIssue(
             symbol = "ORIENT", companyName = "Orient Cables", category = "Mainboard",
-            status = "Active", issueOpenDate = "25 Sep 2026", issueCloseDate = "29 Sep 2026",
+            status = "Active", issueOpenDate = java.time.LocalDate.now().minusDays(1).toString(), issueCloseDate = java.time.LocalDate.now().plusDays(2).toString(),
             priceBand = "₹272", issuePrice = 272.0, lotSize = 55,
             issueSizeCr = 120.0, registrar = "MUFG", totalSub = 2.5,
             gmpAmount = 95.0, gmpPercent = 34.9, estListingPrice = 367.0

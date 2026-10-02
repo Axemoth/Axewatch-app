@@ -3,6 +3,7 @@ package com.aistudio.axewatch.trader.data.remote
 import android.util.Base64
 import android.util.Log
 import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -57,6 +58,9 @@ class IpoAllotmentService(
     var onSourceResult: (String, Boolean, Int) -> Unit = { _, _, _ -> }
 
     companion object {
+        // Shared by foreground checks and WorkManager repositories in this process.
+        private val pacingMutex = kotlinx.coroutines.sync.Mutex()
+        private val lastCallAt = mutableMapOf<String, Long>()
         private const val TAG = "IpoAllotmentService"
         private const val MUFG_BASE = "https://in.mpms.mufg.com/Initial_Offer/"
         private const val KFIN_URL = "https://0uz601ms56.execute-api.ap-south-1.amazonaws.com/prod/api/query"
@@ -132,10 +136,9 @@ class IpoAllotmentService(
         .readTimeout(20, TimeUnit.SECONDS)
         .build()
 
-    private val lastCallAt = mutableMapOf<String, Long>()
 
     /** Polite pacing per source (mirrors the web backend budget). */
-    private suspend fun pace(source: String, gapMs: Long) {
+    private suspend fun pace(source: String, gapMs: Long) = pacingMutex.withLock {
         val now = System.currentTimeMillis()
         val wait = (lastCallAt[source] ?: 0L) + gapMs - now
         if (wait > 0) delay(wait)
@@ -184,6 +187,7 @@ class IpoAllotmentService(
             cachedMufgCompaniesAt = System.currentTimeMillis()
             companies
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "Failed to fetch MUFG company list: ${e.javaClass.simpleName}")
             emptyList()
         }

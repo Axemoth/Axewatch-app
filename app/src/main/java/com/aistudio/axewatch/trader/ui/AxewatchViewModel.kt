@@ -19,6 +19,7 @@ import com.aistudio.axewatch.trader.data.model.IpoIssue
 import com.aistudio.axewatch.trader.data.model.IndexConstituent
 import com.aistudio.axewatch.trader.data.model.MarketIndex
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
+import com.aistudio.axewatch.trader.data.model.portfolioPriceMap
 import com.aistudio.axewatch.trader.data.model.PastIpoItem
 import com.aistudio.axewatch.trader.data.model.PortfolioConcentration
 import com.aistudio.axewatch.trader.data.model.PortfolioSummary
@@ -73,16 +74,20 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     )
     private val _indexConstituents = MutableStateFlow<Map<String, List<IndexConstituent>>>(emptyMap())
     val indexConstituents: StateFlow<Map<String, List<IndexConstituent>>> = _indexConstituents.asStateFlow()
+    private val indexLoadedAt = mutableMapOf<String, Long>()
     private val _indexLoading = MutableStateFlow<Set<String>>(emptySet())
     val indexLoading: StateFlow<Set<String>> = _indexLoading.asStateFlow()
 
     fun loadIndexConstituents(symbol: String) {
-        if (symbol in _indexConstituents.value || symbol in _indexLoading.value) return
+        if (symbol in _indexLoading.value || System.currentTimeMillis() - (indexLoadedAt[symbol] ?: 0L) < 24 * 3600_000L) return
         _indexLoading.value = _indexLoading.value + symbol
         viewModelScope.launch {
             try {
                 val list = repository.getIndexConstituents(symbol)
-                if (list.isNotEmpty()) _indexConstituents.value = _indexConstituents.value + (symbol to list)
+                if (list.isNotEmpty()) {
+                    _indexConstituents.value = _indexConstituents.value + (symbol to list)
+                    indexLoadedAt[symbol] = System.currentTimeMillis()
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -159,10 +164,10 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptySet())
 
     // Calculated Portfolio Summary
-    val portfolioSummary: StateFlow<PortfolioSummary> = combine(holdings, stocks) { hList, sList ->
+    val portfolioSummary: StateFlow<PortfolioSummary> = combine(holdings, stocks, repository.mutualFunds) { hList, sList, funds ->
         // 0.0 prices are unquoted seeds, not quotes: exclude so valuation
         // falls back to buyPrice instead of fabricating a -100% P&L.
-        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
+        val priceMap = portfolioPriceMap(sList, funds)
         var totalInvested = 0.0
         var currentValue = 0.0
         hList.forEach { h ->
@@ -193,8 +198,8 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     )
 
     // Portfolio Concentration Insights
-    val portfolioConcentration: StateFlow<PortfolioConcentration> = combine(holdings, stocks) { hList, sList ->
-        val priceMap = sList.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
+    val portfolioConcentration: StateFlow<PortfolioConcentration> = combine(holdings, stocks, repository.mutualFunds) { hList, sList, funds ->
+        val priceMap = portfolioPriceMap(sList, funds)
         repository.getPortfolioConcentration(hList, priceMap)
     }.stateIn(
         viewModelScope,
@@ -203,6 +208,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     )
 
     // Mutual Funds & Registrar Health
+    val mutualFundsLoading = repository.mutualFundsLoading
     val mutualFunds: StateFlow<List<MutualFundScheme>> = repository.mutualFunds.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
@@ -258,7 +264,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         _outlookLoading.value = true
         loadChart(stock.symbol, _selectedTimeframe.value)
         stockLoadJob = viewModelScope.launch { supervisorScope {
-            if (stock.lastPrice <= 0) launch {
+            launch {
                 try {
                     repository.fetchStockQuote(stock)?.let { quote ->
                         if (selectionId == stockSelectionId) _selectedStock.value = quote
@@ -462,6 +468,8 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
     // seconds, and double-taps used to fire duplicate throttled calls.
     private val _allotBusy = MutableStateFlow(false)
     val allotBusy: StateFlow<Boolean> = _allotBusy.asStateFlow()
+    private val _allotProgress = MutableStateFlow("")
+    val allotProgress = _allotProgress.asStateFlow()
 
     // Declaration watcher (result alerts): background WorkManager run every
     // 6h checks declared issues x saved PANs and notifies. Opt-out toggle;
@@ -507,7 +515,7 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                 com.aistudio.axewatch.trader.data.work.AllotWatchScheduler.runNow(getApplication(), true)
             }
             _toastMessage.emit(
-                if (ok) "PAN saved securely to Vault"
+                if (ok) "PAN saved on this device"
                 else "Invalid PAN format — use AAAAA9999A"
             )
         }
@@ -520,12 +528,14 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    fun checkAllotment(pan: String, ipoSymbol: String, holderName: String = "Self") {
+    fun checkAllotment(pan: String, ipoSymbol: String, holderName: String = "Self", knownName: String? = null) {
+        if (_allotBusy.value) return
+        _allotBusy.value = true
+        _allotProgress.value = "Checking the selected PAN…"
         viewModelScope.launch {
-            _allotBusy.value = true
             try {
                 val record = try {
-                    repository.checkIpoAllotment(pan, ipoSymbol, holderName)
+                    repository.checkIpoAllotment(pan, ipoSymbol, holderName, knownName = knownName)
                 } catch (e: IllegalArgumentException) {
                     _toastMessage.emit("Invalid PAN format — use AAAAA9999A")
                     return@launch
@@ -543,8 +553,12 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     else -> "Status for ${record.ipoSymbol}: ${record.status}"
                 }
             )
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) {
+                emitMessage("The check could not finish. Try again or open the registrar portal.")
             } finally {
                 _allotBusy.value = false
+                _allotProgress.value = ""
             }
         }
     }
@@ -559,28 +573,34 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
             emitMessage("That PAN is no longer in the vault — re-check from the form above")
             return
         }
-        checkAllotment(vault.panNumber, record.ipoSymbol, vault.holderName)
+        checkAllotment(vault.panNumber, record.ipoSymbol, vault.holderName, record.ipoName)
     }
 
     fun refreshAllotmentDetails(record: AllotmentRecordEntity, pan: String) {
         if (_allotBusy.value) return
+        _allotBusy.value = true
+        _allotProgress.value = "Refreshing share quantities…"
         viewModelScope.launch {
-            _allotBusy.value = true
             try {
                 val updated = repository.refreshAllotmentDetails(record, pan)
                 emitMessage(if (updated) "Applied-share details updated" else
                     "No verified quantity available. Your saved result has been kept.")
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
             } catch (_: Exception) {
                 emitMessage("Details could not be refreshed. Your saved result has been kept.")
-            } finally { _allotBusy.value = false }
+            } finally { _allotBusy.value = false; _allotProgress.value = "" }
         }
     }
 
-    fun checkBulkAllotment(ipoSymbol: String) {
+    fun checkBulkAllotment(ipoSymbol: String, knownName: String? = null) {
+        if (_allotBusy.value) return
+        _allotBusy.value = true
+        _allotProgress.value = "Preparing saved PANs…"
         viewModelScope.launch {
-            _allotBusy.value = true
             try {
-                val records = repository.checkBulkAllotment(ipoSymbol)
+                val records = repository.checkBulkAllotment(ipoSymbol, knownName = knownName, onProgress = { completed, total ->
+                    _allotProgress.value = "Checked $completed of $total saved PANs"
+                })
             val msg = if (records.isEmpty()) {
                 "No saved PANs in Vault to check"
             } else {
@@ -595,7 +615,11 @@ class AxewatchViewModel(application: Application) : AndroidViewModel(application
                     "${by["LOOKUP_FAILED"] ?: 0} unreachable"
             }
             _toastMessage.emit(msg)
+            } catch (e: kotlinx.coroutines.CancellationException) { throw e
+            } catch (_: Exception) {
+                emitMessage("The family check stopped. Completed results remain in history; retry when ready.")
             } finally {
+                _allotProgress.value = ""
                 _allotBusy.value = false
             }
         }

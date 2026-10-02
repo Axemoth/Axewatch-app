@@ -11,6 +11,26 @@ import org.junit.Test
  */
 class IpoGmpTablesTest {
 
+    @Test fun octoberLiveTablesKeepSegmentsStatusesAndUnknownPremiums() {
+        fun resource(name: String) = javaClass.classLoader!!.getResource(name)!!.readText()
+        val ig = svc.parseInvestorGainGmpRows(svc.parseTables(resource("investorgain_gmp-2026-10-03.html"), IpoGmpService.COLUMN_ALIASES))
+        val iw = svc.parseIpowatchGmpRows(svc.parseTables(resource("ipowatch_gmp-2026-10-03.html"), IpoGmpService.COLUMN_ALIASES))
+        assertEquals("Forthcoming", ig.first.first().status)
+        org.junit.Assert.assertFalse(ig.first.first().gmpReported)
+        assertEquals(6.0, ig.first[1].gmpAmount, 0.0)
+        assertEquals("SME", ig.first[1].category)
+        val rk = iw.first.first { it.companyName.contains("R.K.Fashion") }
+        assertEquals("Forthcoming", rk.status)
+        assertEquals("SME", rk.category)
+        org.junit.Assert.assertTrue(rk.gmpReported)
+        assertEquals(0.0, rk.gmpAmount, 0.0)
+        val vishal = iw.first.first { it.companyName.contains("Vishal") }
+        assertEquals("Mainboard", vishal.category)
+        assertEquals("Active", vishal.status)
+        org.junit.Assert.assertFalse(vishal.companyName.contains("(O)"))
+        assertEquals(240.0, vishal.estListingPrice, 0.01)
+    }
+
     private val svc = IpoGmpService()
 
     private fun table(vararg cols: String, nrows: Int = 2): IpoGmpService.ParsedTable {
@@ -130,5 +150,27 @@ class IpoGmpTablesTest {
         assertNull(svc.uniqueNormalizedMatch(keys, "orient"))
         assertNull(svc.uniqueNormalizedMatch(setOf("orientcables", "orientcablesltd"), "orientcablesltdindia"))
         assertEquals("orientelectronics", svc.uniqueNormalizedMatch(keys, "orientelectronicsindia"))
+    }
+    @Test fun reportedZeroAndNegativeGmpWinOverPositiveFallback() {
+        fun item(amount: Double, reported: Boolean) = com.aistudio.axewatch.trader.data.model.GmpItem(
+            "Example", "EXAMPLE", 100.0, amount, amount, 100.0 + amount, "Open", 1, "today",
+            gmpReported = reported
+        )
+        for (value in listOf(0.0, -10.0)) {
+            val merged = svc.mergeMultiSourceGmp(
+                listOf(com.aistudio.axewatch.trader.data.model.IpoIssue("EXAMPLE", "Example", "Mainboard", "Active",
+                    "01-Oct-2026", "05-Oct-2026", "100", 100.0, 100, 10.0, "Unknown", gmpAmount = value,
+                    gmpPercent = value, gmpReported = true)),
+                listOf(item(value, true)),
+                listOf(com.aistudio.axewatch.trader.data.model.IpoIssue("EXAMPLE", "Example", "Mainboard", "Active",
+                    "01-Oct-2026", "05-Oct-2026", "100", 100.0, 100, 10.0, "Unknown", gmpAmount = 20.0)),
+                listOf(item(20.0, true))
+            )
+            assertEquals(value, merged.first.single().gmpAmount, 0.0)
+            assertEquals(value, merged.second.single().gmpAmount, 0.0)
+        }
+        org.junit.Assert.assertTrue(svc.hasReportedGmp("0"))
+        org.junit.Assert.assertTrue(svc.hasReportedGmp("-10 (-10%)"))
+        org.junit.Assert.assertFalse(svc.hasReportedGmp("--"))
     }
 }

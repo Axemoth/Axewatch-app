@@ -29,7 +29,7 @@ class NavigationTest {
     private var handled = 0
     private val issues = (1..30).map { index ->
         IpoIssue(symbol = "ISSUE$index", companyName = "Issue Company $index", category = "Mainboard",
-            status = "Active", issueOpenDate = "28 Sep 2026", issueCloseDate = "30 Sep 2026",
+            status = "Active", issueOpenDate = java.time.LocalDate.now().minusDays(1).toString(), issueCloseDate = java.time.LocalDate.now().plusDays(2).toString(),
             priceBand = "", issuePrice = 0.0, lotSize = 0, issueSizeCr = 0.0, registrar = "Unknown")
     }
     private fun setup(coldNotification: Boolean = false): StateRestorationTester {

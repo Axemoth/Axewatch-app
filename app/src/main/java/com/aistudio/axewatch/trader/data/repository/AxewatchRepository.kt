@@ -47,6 +47,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import com.aistudio.axewatch.trader.data.model.normalizedHoldingType
+import com.aistudio.axewatch.trader.data.model.resolveAllotmentIssue
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
@@ -330,7 +333,7 @@ class AxewatchRepository(
         }
 
     // ---- Measured source health (never hardcoded OPERATIONAL) ----
-    private data class SourceStat(var ok: Int = 0, var fail: Int = 0, var lastMs: Int = 0)
+    private data class SourceStat(var ok: Int = 0, var fail: Int = 0, var lastMs: Int = 0, var lastOk: Boolean = false)
 
     private val allotSourceStats = mutableMapOf(
         "allot_mufg" to SourceStat(),
@@ -342,6 +345,7 @@ class AxewatchRepository(
         val s = allotSourceStats.getOrPut(id) { SourceStat() }
         if (ok) s.ok++ else s.fail++
         s.lastMs = ms
+        s.lastOk = ok
         rebuildAllotHealth()
     }
 
@@ -351,7 +355,7 @@ class AxewatchRepository(
             val total = s.ok + s.fail
             return when {
                 total == 0 -> RegistrarSourceHealth(id, name, "IDLE", 0, "No checks run yet this session")
-                s.fail > 0 && s.ok == 0 -> RegistrarSourceHealth(id, name, "DEGRADED", s.lastMs, "Recent lookups failing — backing off")
+                !s.lastOk -> RegistrarSourceHealth(id, name, "DEGRADED", s.lastMs, "Last lookup failed — retry later")
                 else -> RegistrarSourceHealth(id, name, "OPERATIONAL", s.lastMs, "Last lookup succeeded")
             }
         }
@@ -394,6 +398,8 @@ class AxewatchRepository(
     private val _quantModelReportCard = MutableStateFlow(QuantModelReportCard())
     val quantModelReportCard: Flow<QuantModelReportCard> = _quantModelReportCard.asStateFlow()
 
+    private val _mutualFundsLoading = MutableStateFlow(false)
+    val mutualFundsLoading = _mutualFundsLoading.asStateFlow()
     private val _mutualFunds = MutableStateFlow<List<MutualFundScheme>>(emptyList())
     val mutualFunds: Flow<List<MutualFundScheme>> = _mutualFunds.asStateFlow()
 
@@ -607,11 +613,16 @@ class AxewatchRepository(
             }
         }
         val mfDeferred = async {
+            _mutualFundsLoading.value = true
             try {
-                mfService.fetchPopularSchemes()
+                val heldCodes = getHoldings().first().filter { it.assetType == "MUTUAL_FUND" }
+                    .map { it.symbol }.filter { Regex("[0-9]{5,6}").matches(it) }
+                mfService.fetchPopularSchemes(heldCodes) { fund ->
+                    _mutualFunds.update { old -> (old.filterNot { it.code == fund.code } + fund).sortedBy { it.name } }
+                }
             } catch (_: Exception) {
                 emptyList<MutualFundScheme>()
-            }
+            } finally { _mutualFundsLoading.value = false }
         }
         val fiiDiiDeferred = async {
             try {
@@ -767,7 +778,7 @@ class AxewatchRepository(
         try {
             val liveMfs = mfDeferred.await()
             if (liveMfs.isNotEmpty()) {
-                _mutualFunds.value = liveMfs
+                _mutualFunds.update { old -> (old.filterNot { it.code in liveMfs.map { fund -> fund.code } } + liveMfs).sortedBy { it.name } }
             }
         } catch (_: Exception) {
         }
@@ -849,13 +860,19 @@ class AxewatchRepository(
 
     suspend fun fetchStockNews(symbol: String): NewsAnalysisResult = newsService.fetchStockNews(symbol)
 
-    suspend fun fetchStockQuote(stock: StockQuote): StockQuote? =
-        yahooService.fetchStockQuote(stock.symbol, stock.name, stock.sector)?.also { quote ->
+    private val openedQuoteCache = ConcurrentHashMap<String, Pair<Long, StockQuote>>()
+
+    suspend fun fetchStockQuote(stock: StockQuote): StockQuote? {
+        val cached = openedQuoteCache[stock.symbol]
+        if (cached != null && System.currentTimeMillis() - cached.first in 0 until 60_000L) return cached.second
+        return yahooService.fetchStockQuote(stock.symbol, stock.name, stock.sector)?.also { quote ->
+            openedQuoteCache[stock.symbol] = System.currentTimeMillis() to quote
             _stocks.update { current ->
                 if (current.any { it.symbol == quote.symbol }) current.map { if (it.symbol == quote.symbol) quote else it }
                 else current + quote
             }
         }
+    }
 
     // Real IPO Allotment Checker (Link Intime AES token & KFintech API)
     suspend fun checkIpoAllotment(
@@ -871,7 +888,15 @@ class AxewatchRepository(
     ): AllotmentRecordEntity = withContext(Dispatchers.IO) {
         val cleanPan = pan.trim().uppercase()
         require(IpoAllotmentService.isValidPan(cleanPan)) { "Invalid PAN format" }
-        val ipo = _ipos.value.find { it.symbol == ipoSymbol } ?: IpoIssue(
+        val resolved = resolveAllotmentIssue(_ipos.value, ipoSymbol, knownName)
+        if (resolved == null && knownName.isNullOrBlank() && _ipos.value.count { it.symbol == ipoSymbol } > 1) {
+            val failed = AllotmentRecordEntity(maskedPan = IpoAllotmentService.maskPan(cleanPan),
+                ipoSymbol = ipoSymbol, ipoName = ipoSymbol, sharesApplied = 0, sharesAllotted = 0,
+                status = "LOOKUP_FAILED", registrar = "Unknown", appliedSharesSource = "UNKNOWN")
+            if (persistResult) panVaultDao.insertRecord(failed)
+            return@withContext failed
+        }
+        val ipo = resolved ?: IpoIssue(
             symbol = ipoSymbol,
             companyName = ipoSymbol,
             category = "Mainboard",
@@ -952,10 +977,12 @@ class AxewatchRepository(
 
     // --- Local Room Database Operations ---
     // Holdings
-    fun getHoldings(): Flow<List<HoldingEntity>> = holdingDao.getAllHoldings()
+    fun getHoldings(): Flow<List<HoldingEntity>> = holdingDao.getAllHoldings().map { rows ->
+        rows.map { it.copy(assetType = normalizedHoldingType(it.assetType)) }
+    }
 
     suspend fun addHolding(holding: HoldingEntity) = withContext(Dispatchers.IO) {
-        holdingDao.insertHolding(holding)
+        holdingDao.insertHolding(holding.copy(assetType = normalizedHoldingType(holding.assetType)))
     }
 
     suspend fun deleteHolding(id: Long) = withContext(Dispatchers.IO) {
@@ -1173,21 +1200,27 @@ class AxewatchRepository(
         onlyPanNumbers: Set<String>? = null,
         knownName: String? = null,
         knownRegistrar: String? = null,
-        knownDeclared: Boolean = false
+        knownDeclared: Boolean = false,
+        onProgress: (completed: Int, total: Int) -> Unit = { _, _ -> }
     ): List<AllotmentRecordEntity> = withContext(Dispatchers.IO) {
         val pans = panVaultDao.getAllPans().first()
             .filter { onlyPanNumbers == null || it.panNumber in onlyPanNumbers }
-        val results = mutableListOf<AllotmentRecordEntity>()
-        for ((index, pan) in pans.withIndex()) {
-            // Paced: 400ms is safe for registrars and gives responsive bulk checking. First PAN goes immediately.
-            if (index > 0) delay(400)
-            val record = checkIpoAllotment(
+            .distinctBy { it.panNumber.trim().uppercase() }
+        runAllotmentBatch(pans, onProgress, check = { pan ->
+            checkIpoAllotment(
                 pan.panNumber, ipoSymbol, pan.holderName,
                 knownName = knownName, knownRegistrar = knownRegistrar, knownDeclared = knownDeclared
             )
-            results.add(record)
-        }
-        results
+        }, onFailure = { pan ->
+            // Preserve completed results and report this applicant as failed, never not-applied.
+            AllotmentRecordEntity(
+                maskedPan = IpoAllotmentService.maskPan(pan.panNumber), ipoSymbol = ipoSymbol,
+                ipoName = knownName ?: _ipos.value.firstOrNull { it.symbol == ipoSymbol }?.companyName ?: ipoSymbol,
+                sharesApplied = 0, sharesAllotted = 0, status = "LOOKUP_FAILED",
+                registrar = knownRegistrar ?: _ipos.value.firstOrNull { it.symbol == ipoSymbol }?.registrar ?: "Unknown",
+                appliedSharesSource = "UNKNOWN"
+            ).also { panVaultDao.insertRecord(it) }
+        })
     }
 
     // ---- Declaration watcher support (background, directory-driven) ----
@@ -1305,10 +1338,10 @@ class AxewatchRepository(
         RegistrarLink("KFintech IPO Status", "KFintech investor query & allotment portal", "https://ipostatus.kfintech.com/", "Registrar"),
         RegistrarLink("Bigshare Services", "Bigshare SME & Mainboard status (captcha)", "https://ipo.bigshareonline.com/ipo_status.html", "Registrar"),
         RegistrarLink("Skyline Financial", "Skyline RTA IPO query portal", "https://www.skylinerta.com/ipo.php", "Registrar"),
-        RegistrarLink("Cameo Corporate", "Cameo India IPO status checker", "https://ipostatus.cameoindia.com/", "Registrar"),
+        RegistrarLink("Cameo Corporate", "Cameo India IPO status checker", "https://ipostatus1.cameoindia.com/", "Registrar"),
         RegistrarLink("Maashitla Securities", "Maashitla public-issues PAN search", "https://maashitla.com/allotment-status/public-issues/", "Registrar"),
         RegistrarLink("Purva Sharegistry", "Purva Sharegistry investor query", "https://www.purvashare.com/investor-service/ipo-query", "Registrar"),
-        RegistrarLink("Beetal Financial", "Beetal Financial computer services", "https://www.beetalfinancial.com/", "Registrar")
+        RegistrarLink("Beetal Financial", "Beetal Financial computer services", "https://beetal.in/investor-services/#IPO_Allotment_Status", "Registrar")
     )
 
     fun getPortfolioConcentration(

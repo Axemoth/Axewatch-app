@@ -22,12 +22,31 @@ class YahooFinanceService {
         private const val TAG = "YahooFinanceService"
         private const val BASE_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/"
         private const val SEARCH_URL = "https://query1.finance.yahoo.com/v1/finance/search"
+        /** Ignore future/holiday placeholder bars and the current trading session. */
+        internal fun previousSessionClose(result: JSONObject): Double? {
+            val meta = result.optJSONObject("meta") ?: return null
+            val marketTime = meta.optLong("regularMarketTime", 0L)
+            val offset = meta.optLong("gmtoffset", 19800L)
+            val marketDay = (marketTime + offset) / 86400
+            val timestamps = result.optJSONArray("timestamp")
+            val closes = result.optJSONObject("indicators")?.optJSONArray("quote")?.optJSONObject(0)?.optJSONArray("close")
+            if (marketTime > 0 && timestamps != null && closes != null) {
+                for (i in minOf(timestamps.length(), closes.length()) - 1 downTo 0) {
+                    val price = closes.optDouble(i, Double.NaN)
+                    val date = timestamps.optLong(i, 0L)
+                    if (date > 0 && (date + offset) / 86400 < marketDay && price.isFinite() && price > 0) return price
+                }
+            }
+            return meta.optDouble("previousClose", Double.NaN).takeIf { it.isFinite() && it > 0 }
+        }
+
         private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36"
     }
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(25, TimeUnit.SECONDS)
         .build()
 
     private val dateFormat = SimpleDateFormat("dd MMM", Locale.ENGLISH)
@@ -48,6 +67,7 @@ class YahooFinanceService {
 
             val response = client.newCall(request).execute()
             if (!response.isSuccessful) {
+                response.close()
                 Log.w(TAG, "Yahoo quote $ticker failed HTTP ${response.code}")
                 return@withContext null
             }
@@ -63,23 +83,7 @@ class YahooFinanceService {
             val curPrice = meta.optDouble("regularMarketPrice", 0.0)
             if (curPrice <= 0.0) return@withContext null
 
-            val indicators = resultObj.optJSONObject("indicators")
-            val quoteArr = indicators?.optJSONArray("quote")
-            val quoteObj = quoteArr?.optJSONObject(0)
-            val closeArr = quoteObj?.optJSONArray("close")
-
-            var prevClose = meta.optDouble("chartPreviousClose", curPrice)
-            if (closeArr != null && closeArr.length() >= 2) {
-                for (i in closeArr.length() - 2 downTo 0) {
-                    if (!closeArr.isNull(i)) {
-                        val c = closeArr.optDouble(i, 0.0)
-                        if (c > 0) {
-                            prevClose = c
-                            break
-                        }
-                    }
-                }
-            }
+            val prevClose = previousSessionClose(resultObj) ?: curPrice
 
             val change = curPrice - prevClose
             val pctChange = if (prevClose > 0) (change / prevClose) * 100.0 else 0.0
@@ -87,7 +91,7 @@ class YahooFinanceService {
             val dayLow = meta.optDouble("regularMarketDayLow", curPrice)
             val high52 = meta.optDouble("fiftyTwoWeekHigh", dayHigh)
             val low52 = meta.optDouble("fiftyTwoWeekLow", dayLow)
-            val volRaw = meta.optLong("regularMarketVolume", 1000000L)
+            val volRaw = meta.optLong("regularMarketVolume", 0L)
             val volStr = formatVolume(volRaw)
 
             val cleanName = if (companyName.isNotBlank()) companyName else symbol
@@ -109,6 +113,7 @@ class YahooFinanceService {
                 marketCapCr = null
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "Error fetching Yahoo quote for $symbol: ${e.message}")
             null
         }
@@ -128,7 +133,7 @@ class YahooFinanceService {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext null
+            if (!response.isSuccessful) { response.close(); return@withContext null }
 
             val body = response.body?.string() ?: return@withContext null
             val root = JSONObject(body)
@@ -141,18 +146,7 @@ class YahooFinanceService {
             if (curPrice <= 0.0) return@withContext null
 
             val closeArr = resultObj.optJSONObject("indicators")?.optJSONArray("quote")?.optJSONObject(0)?.optJSONArray("close")
-            var prevClose = meta.optDouble("chartPreviousClose", curPrice)
-            if (closeArr != null && closeArr.length() >= 2) {
-                for (i in closeArr.length() - 2 downTo 0) {
-                    if (!closeArr.isNull(i)) {
-                        val c = closeArr.optDouble(i, 0.0)
-                        if (c > 0) {
-                            prevClose = c
-                            break
-                        }
-                    }
-                }
-            }
+            val prevClose = previousSessionClose(resultObj) ?: curPrice
 
             val change = curPrice - prevClose
             val pctChange = if (prevClose > 0) (change / prevClose) * 100.0 else 0.0
@@ -175,6 +169,7 @@ class YahooFinanceService {
                 declines = 0
             )
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "Error fetching index $ticker: ${e.message}")
             null
         }
@@ -194,7 +189,7 @@ class YahooFinanceService {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext emptyList()
+            if (!response.isSuccessful) { response.close(); return@withContext emptyList() }
 
             val body = response.body?.string() ?: return@withContext emptyList()
             val root = JSONObject(body)
@@ -238,6 +233,7 @@ class YahooFinanceService {
             // value was discarded by the caller and labelled "SMA (20)" in the UI.
             candles
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "Error fetching Yahoo candles for $symbol: ${e.message}")
             emptyList()
         }
@@ -257,7 +253,7 @@ class YahooFinanceService {
                 .build()
 
             val response = client.newCall(request).execute()
-            if (!response.isSuccessful) return@withContext emptyList()
+            if (!response.isSuccessful) { response.close(); return@withContext emptyList() }
 
             val body = response.body?.string() ?: return@withContext emptyList()
             val root = JSONObject(body)
@@ -277,6 +273,7 @@ class YahooFinanceService {
             }
             results
         } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
             Log.w(TAG, "Search failed for $query: ${e.message}")
             emptyList()
         }

@@ -29,7 +29,7 @@ class IpoGmpService {
         // Internal so tests pin header aliasing against live-observed shapes.
         internal val COLUMN_ALIASES = listOf(
             "gmp" to listOf("ipo gmp", "gmp*", "gmp (rs)", "gmp ₹", "gmp", "premium"),
-            "est_listing" to listOf("est. listing", "estimated listing", "exp listing", "listing gain", "est listing"),
+            "est_listing" to listOf("est. listing", "estimated listing", "exp listing", "listing gain", "est listing", "est. gain"),
             "listing_price" to listOf("listing price", "listing_price", "listing on"),
             "price" to listOf("price band", "ipo price", "issue price", "price", "price rs"),
             "updated" to listOf("last updated", "updated dt", "updated on", "updated"),
@@ -82,7 +82,7 @@ class IpoGmpService {
         val rows: List<Map<String, String>>
     )
 
-    private data class LiveSubInfo(
+    internal data class LiveSubInfo(
         val qib: Double,
         val nii: Double,
         val shni: Double = 0.0,
@@ -148,6 +148,11 @@ class IpoGmpService {
             emptyMap()
         }
 
+        return parseInvestorGainGmpRows(tables, subMap)
+    }
+
+    internal fun parseInvestorGainGmpRows(tables: List<ParsedTable>, subMap: Map<String, LiveSubInfo> = emptyMap()): Pair<List<IpoIssue>, List<GmpItem>> {
+        if (tables.isEmpty()) return emptyList<IpoIssue>() to emptyList()
         val allIpos = mutableListOf<IpoIssue>()
         val allGmps = mutableListOf<GmpItem>()
 
@@ -158,17 +163,18 @@ class IpoGmpService {
             if (cleanName.isBlank() || isHeaderNoise(cleanName)) continue
 
             val issuePrice = parseNumber(row["price"] ?: "0")
+            val gmpReported = hasReportedGmp(row["gmp"].orEmpty())
             val (gmpAmount, rawGmpPct) = parseGmpField(row["gmp"] ?: "")
-            val gmpPercent = if (rawGmpPct > 0.0) {
+            val gmpPercent = if (rawGmpPct != 0.0) {
                 rawGmpPct
-            } else if (issuePrice > 0.0 && gmpAmount > 0.0) {
+            } else if (issuePrice > 0.0 && gmpReported) {
                 ((gmpAmount / issuePrice) * 100.0).roundToOneDecimal()
             } else {
                 0.0
             }
 
             var estListingPrice = parseNumber(row["est_listing"] ?: "")
-            if (estListingPrice <= 0.0 && issuePrice > 0) {
+            if (estListingPrice <= 0.0 && gmpReported && issuePrice > 0) {
                 estListingPrice = issuePrice + gmpAmount
             }
 
@@ -220,6 +226,7 @@ class IpoGmpService {
                 riiSub = retail,
                 totalSub = total,
                 gmpAmount = gmpAmount,
+                    gmpReported = gmpReported,
                 gmpPercent = gmpPercent,
                 estListingPrice = estListingPrice,
                 allotmentDate = allotmentDate
@@ -240,6 +247,7 @@ class IpoGmpService {
                     symbol = symbol,
                     issuePrice = issuePrice,
                     gmpAmount = gmpAmount,
+                    gmpReported = gmpReported,
                     gmpPercent = gmpPercent,
                     estListingPrice = estListingPrice,
                     status = if (mappedStatus == "Active") "Open" else mappedStatus,
@@ -253,7 +261,7 @@ class IpoGmpService {
         return Pair(allIpos, allGmps)
     }
 
-    private fun mergeMultiSourceGmp(
+    internal fun mergeMultiSourceGmp(
         igIpos: List<IpoIssue>,
         igGmps: List<GmpItem>,
         iwIpos: List<IpoIssue>,
@@ -280,8 +288,8 @@ class IpoGmpService {
 
             if (matchedIw != null) {
                 // Cross-verified merge: prefer verified GMP and enrich missing metadata
-                val gmpAmt = if (igIpo.gmpAmount > 0) igIpo.gmpAmount else matchedIw.gmpAmount
-                val gmpPct = if (igIpo.gmpPercent > 0) igIpo.gmpPercent else matchedIw.gmpPercent
+                val gmpAmt = if (igIpo.gmpReported) igIpo.gmpAmount else matchedIw.gmpAmount
+                val gmpPct = if (igIpo.gmpReported) igIpo.gmpPercent else matchedIw.gmpPercent
                 val lot = if (igIpo.lotSize > 0) igIpo.lotSize else matchedIw.lotSize
                 val allotmentDt = igIpo.allotmentDate.ifBlank { matchedIw.allotmentDate }
                 fun knownDate(first: String, second: String) = first.takeIf {
@@ -300,8 +308,9 @@ class IpoGmpService {
                 mergedIpos.add(
                     igIpo.copy(
                         gmpAmount = gmpAmt,
+                        gmpReported = igIpo.gmpReported || matchedIw.gmpReported,
                         gmpPercent = gmpPct,
-                        estListingPrice = if (igIpo.issuePrice > 0) igIpo.issuePrice + gmpAmt else igIpo.estListingPrice,
+                        estListingPrice = if (igIpo.issuePrice > 0 && (igIpo.gmpReported || matchedIw.gmpReported)) igIpo.issuePrice + gmpAmt else igIpo.estListingPrice,
                         lotSize = lot,
                         allotmentDate = allotmentDt,
                         issueOpenDate = knownDate(igIpo.issueOpenDate, matchedIw.issueOpenDate),
@@ -334,13 +343,14 @@ class IpoGmpService {
             }
 
             if (matchedIw != null) {
-                val gmpAmt = if (igGmp.gmpAmount > 0) igGmp.gmpAmount else matchedIw.gmpAmount
-                val gmpPct = if (igGmp.gmpPercent > 0) igGmp.gmpPercent else matchedIw.gmpPercent
+                val gmpAmt = if (igGmp.gmpReported) igGmp.gmpAmount else matchedIw.gmpAmount
+                val gmpPct = if (igGmp.gmpReported) igGmp.gmpPercent else matchedIw.gmpPercent
                 mergedGmps.add(
                     igGmp.copy(
                         gmpAmount = gmpAmt,
+                        gmpReported = igGmp.gmpReported || matchedIw.gmpReported,
                         gmpPercent = gmpPct,
-                        estListingPrice = if (igGmp.issuePrice > 0) igGmp.issuePrice + gmpAmt else igGmp.estListingPrice,
+                        estListingPrice = if (igGmp.issuePrice > 0 && (igGmp.gmpReported || matchedIw.gmpReported)) igGmp.issuePrice + gmpAmt else igGmp.estListingPrice,
                         lastUpdated = igGmp.lastUpdated.ifBlank { matchedIw.lastUpdated },
                         category = if (igGmp.category != "Unknown") igGmp.category else matchedIw.category
                     )
@@ -404,6 +414,11 @@ class IpoGmpService {
             emptyMap()
         }
 
+        return parseIpowatchGmpRows(tables, subMap)
+    }
+
+    internal fun parseIpowatchGmpRows(tables: List<ParsedTable>, subMap: Map<String, LiveSubInfo> = emptyMap()): Pair<List<IpoIssue>, List<GmpItem>> {
+        if (tables.isEmpty()) return emptyList<IpoIssue>() to emptyList()
         val allIpos = mutableListOf<IpoIssue>()
         val allGmps = mutableListOf<GmpItem>()
 
@@ -420,12 +435,13 @@ class IpoGmpService {
                 val rawPrice = row["price"] ?: "0"
                 val issuePrice = parseNumber(rawPrice)
 
-                val rawGmp = row["gmp"] ?: "0"
+                val rawGmp = row["gmp"].orEmpty()
+                val gmpReported = hasReportedGmp(rawGmp)
                 val gmpAmount = parseNumber(rawGmp)
 
                 val estListingRaw = row["est_listing"] ?: ""
                 var estListingPrice = parseNumber(estListingRaw)
-                if (estListingPrice <= 0.0 && issuePrice > 0) {
+                if (estListingPrice <= 0.0 && gmpReported && issuePrice > 0) {
                     estListingPrice = issuePrice + gmpAmount
                 }
 
@@ -439,10 +455,14 @@ class IpoGmpService {
                 val (openDate, closeDate) = parseDates(rawDates)
 
                 val rawStatus = row["status"].orEmpty()
-                val mappedStatus = mapStatus(rawStatus)
+                val mappedStatus = mapStatus(rawStatus.ifBlank { rawName })
 
                 val symbol = generateSymbol(cleanName)
-                val isSme = category == "SME" || cleanName.contains("SME", ignoreCase = true)
+                val isSme = when {
+                    rawName.contains("Mainboard", true) -> false
+                    rawName.contains("SME", true) -> true
+                    else -> category == "SME"
+                }
 
         // Subscription figures come ONLY from the live sub-table. The old
         // code invented qib=3.4/nii=2.8/rii=2.1 for Active IPOs with no
@@ -489,6 +509,7 @@ class IpoGmpService {
                     riiSub = rii,
                     totalSub = total,
                     gmpAmount = gmpAmount,
+                    gmpReported = gmpReported,
                     gmpPercent = gmpPercent,
                     estListingPrice = estListingPrice
                 )
@@ -507,6 +528,7 @@ class IpoGmpService {
                     symbol = symbol,
                     issuePrice = issuePrice,
                     gmpAmount = gmpAmount,
+                    gmpReported = gmpReported,
                     gmpPercent = gmpPercent,
                     estListingPrice = estListingPrice,
                     status = if (mappedStatus == "Active") "Open" else mappedStatus,
@@ -845,6 +867,7 @@ class IpoGmpService {
 
     private fun cleanCompanyName(raw: String): String {
         val original = raw.replace(Regex("<[^>]+>"), " ")
+            .replace(Regex("\\([UOCLA]\\)"), " ")
             .replace("&amp;", "&")
             .replace("&nbsp;", " ")
             .replace(Regex("(?i)\\b(Apply IPO|View Review|Details|RHP|DRHP)\\b"), "")
@@ -859,7 +882,7 @@ class IpoGmpService {
         //
         // Peel those tokens off both ends, but never peel the whole string:
         // "NSE" is itself a real IPO name and used to clean to "".
-        val words = "(?:BSE|NSE|SME|IPO|OPEN|CLOSED|LIVE|ACTIVE|FORTHCOMING|UPCOMING)"
+        val words = "(?:BSE|NSE|SME|MAINBOARD|IPO|OPEN|CLOSED|LIVE|ACTIVE|FORTHCOMING|UPCOMING)"
         // (regex, isLeadingPeel). A LEADING peel must not land on another
         // bare token — "NSE IPO" must not become "IPO". A TRAILING peel is
         // always right: it leaves the name ("NSE IPO" -> "NSE").
@@ -895,7 +918,9 @@ class IpoGmpService {
         return text.replace(Regex("\\s+"), " ").trim()
     }
 
-    private fun parseGmpField(text: String): Pair<Double, Double> {
+    internal fun hasReportedGmp(text: String): Boolean = Regex("^\\s*(?:₹\\s*)?-?\\d+(?:\\.\\d+)?").containsMatchIn(text.replace(",", ""))
+
+    internal fun parseGmpField(text: String): Pair<Double, Double> {
         val clean = text.replace("₹", "").replace(",", "").trim()
         if (clean.isBlank() || clean.contains("--")) return Pair(0.0, 0.0)
         val m = Pattern.compile("(-?\\d+(?:\\.\\d+)?)\\s*(?:\\(\\s*(-?\\d+(?:\\.\\d+)?)\\s*%?\\s*\\))?").matcher(clean)
@@ -940,6 +965,10 @@ class IpoGmpService {
 
     private fun mapStatus(rawStatus: String): String {
         val l = rawStatus.lowercase()
+        val code = Regex("\\(([UOCLA])\\)").find(rawStatus)?.groupValues?.get(1)
+        if (code != null) return when (code) {
+            "L" -> "Listed"; "A" -> "Allotted"; "C" -> "Closed"; "U" -> "Forthcoming"; else -> "Active"
+        }
         return when {
             rawStatus.endsWith(" L") || l.endsWith("listed") -> "Listed"
             rawStatus.endsWith(" A") || l.endsWith("allotted") -> "Allotted"

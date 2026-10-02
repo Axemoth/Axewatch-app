@@ -63,6 +63,8 @@ import androidx.compose.ui.unit.sp
 import com.aistudio.axewatch.trader.data.local.entity.HoldingEntity
 import com.aistudio.axewatch.trader.data.local.entity.WatchlistEntity
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
+import com.aistudio.axewatch.trader.data.model.fundPercent
+import com.aistudio.axewatch.trader.data.model.portfolioPriceMap
 import com.aistudio.axewatch.trader.data.model.PortfolioConcentration
 import com.aistudio.axewatch.trader.data.model.PortfolioSummary
 import com.aistudio.axewatch.trader.data.model.StockQuote
@@ -88,6 +90,7 @@ fun PortfolioScreen(
     stocks: List<StockQuote>,
     watchlist: List<WatchlistEntity>,
     mutualFunds: List<MutualFundScheme> = emptyList(),
+    mutualFundsLoading: Boolean = false,
     concentration: PortfolioConcentration = PortfolioConcentration("None", 0.0, false, 0.0, 0.0, 0.0, "None", 0.0, "None", 0.0),
     onAddHoldingClick: () -> Unit,
     onAddDirectHolding: (symbol: String, name: String, quantity: Double, buyPrice: Double, sector: String) -> Unit = { _, _, _, _, _ -> },
@@ -109,9 +112,7 @@ fun PortfolioScreen(
     // 0.0 = membership seed with no quote yet: absent from the map so every
     // consumer falls back to buyPrice (valuation) or renders "—" (display),
     // never computes against ₹0.
-    val priceMap = remember(stocks) {
-        stocks.associateBy({ it.symbol }, { it.lastPrice }).filterValues { it > 0 }
-    }
+    val priceMap = remember(stocks, mutualFunds) { portfolioPriceMap(stocks, mutualFunds) }
 
     val filteredMutualFunds = remember(mutualFunds, mfCategoryFilter, mfSearchQuery) {
         val byCat = if (mfCategoryFilter == "All") {
@@ -470,7 +471,7 @@ fun PortfolioScreen(
                         }
 
                         // Category Filter Chips
-                        val mfCategories = listOf("All", "Flexi Cap", "Large Cap", "Small Cap", "Mid Cap", "Hybrid", "Debt", "Index")
+                        val mfCategories = listOf("All", "Flexi Cap", "Large Cap", "Large & Mid Cap", "Small Cap", "Mid Cap", "Hybrid", "Debt", "Index")
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -527,12 +528,16 @@ fun PortfolioScreen(
                                 .padding(32.dp),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("No mutual funds found matching \"$mfSearchQuery\"", color = AxeTextMuted, fontSize = 12.sp)
+                            Text(when {
+                                mutualFundsLoading -> "Loading published NAVs…"
+                                mutualFunds.isEmpty() -> "Fund data unavailable. Refresh to retry."
+                                else -> "No funds match this category or search."
+                            }, color = AxeTextMuted, fontSize = 12.sp)
                         }
                     }
                 } else {
                     items(filteredMutualFunds.distinctBy { it.code }, key = { it.code }) { mf ->
-                        val isPos = mf.dayChangePercent >= 0
+                        val isPos = (mf.dayChangePercent ?: 0.0) >= 0
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -578,7 +583,7 @@ fun PortfolioScreen(
                                             .padding(horizontal = 6.dp, vertical = 2.dp)
                                     ) {
                                         Text(
-                                            text = mf.riskLevel,
+                                            text = mf.riskLevel.ifBlank { "Risk: unknown" },
                                             color = AxeEmeraldGreen,
                                             fontSize = 9.sp,
                                             fontWeight = FontWeight.SemiBold
@@ -614,7 +619,7 @@ fun PortfolioScreen(
                                             fontWeight = FontWeight.Bold
                                         )
                                         Text(
-                                            text = "${if (isPos) "+" else ""}${"%,.2f".format(mf.dayChangePercent)}% today",
+                                            text = "${fundPercent(mf.dayChangePercent)} · NAV ${mf.navDate}",
                                             color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
                                             fontSize = 10.sp,
                                             fontWeight = FontWeight.SemiBold
@@ -624,23 +629,23 @@ fun PortfolioScreen(
                                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                         Text("1Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
                                         Text(
-                                            text = "${if (mf.return1Yr >= 0) "+" else ""}${"%,.1f".format(mf.return1Yr)}%",
-                                            color = if (mf.return1Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                                            text = fundPercent(mf.return1Yr),
+                                            color = if ((mf.return1Yr ?: 0.0) >= 0) AxeEmeraldGreen else AxeRoseRed,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Text("Exp: ${mf.expenseRatio}%", color = AxeTextSecondary, fontSize = 10.sp)
+                                        Text("Exp: ${fundPercent(mf.expenseRatio)}", color = AxeTextSecondary, fontSize = 10.sp)
                                     }
 
                                     Column(horizontalAlignment = Alignment.End) {
                                         Text("3Y CAGR", color = AxeTextMuted, fontSize = 10.sp)
                                         Text(
-                                            text = "${if (mf.return3Yr >= 0) "+" else ""}${"%,.1f".format(mf.return3Yr)}%",
-                                            color = if (mf.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                                            text = fundPercent(mf.return3Yr),
+                                            color = if ((mf.return3Yr ?: 0.0) >= 0) AxeEmeraldGreen else AxeRoseRed,
                                             fontSize = 14.sp,
                                             fontWeight = FontWeight.Bold
                                         )
-                                        Text("AUM: ₹${"%,.0f".format(mf.aumCr)} Cr", color = AxeTextSecondary, fontSize = 10.sp)
+                                        Text(mf.aumCr?.let { "AUM: ₹${"%,.0f".format(it)} Cr" } ?: "AUM: —", color = AxeTextSecondary, fontSize = 10.sp)
                                     }
                                 }
 
@@ -654,7 +659,7 @@ fun PortfolioScreen(
                                     ) {
                                         Text("Asset Mix", color = AxeTextMuted, fontSize = 10.sp)
                                         Text(
-                                            text = "${mf.equityPercent}% Equity · ${mf.debtPercent}% Debt · ${mf.cashPercent}% Cash",
+                                            text = if (mf.equityPercent == null) "Not supplied by NAV source" else "${mf.equityPercent}% Equity · ${mf.debtPercent}% Debt · ${mf.cashPercent}% Cash",
                                             color = AxeTextSecondary,
                                             fontSize = 10.sp
                                         )
@@ -668,26 +673,26 @@ fun PortfolioScreen(
                                             .background(AxeDarkSurfaceElevated)
                                     ) {
                                         Row(modifier = Modifier.fillMaxWidth()) {
-                                            if (mf.equityPercent > 0) {
+                                            if ((mf.equityPercent ?: 0.0) > 0) {
                                                 Box(
                                                     modifier = Modifier
-                                                        .weight(mf.equityPercent.toFloat())
+                                                        .weight((mf.equityPercent ?: 0.0).toFloat())
                                                         .fillMaxHeight()
                                                         .background(Color(0xFF38BDF8))
                                                 )
                                             }
-                                            if (mf.debtPercent > 0) {
+                                            if ((mf.debtPercent ?: 0.0) > 0) {
                                                 Box(
                                                     modifier = Modifier
-                                                        .weight(mf.debtPercent.toFloat())
+                                                        .weight((mf.debtPercent ?: 0.0).toFloat())
                                                         .fillMaxHeight()
                                                         .background(Color(0xFFF87171))
                                                 )
                                             }
-                                            if (mf.cashPercent > 0) {
+                                            if ((mf.cashPercent ?: 0.0) > 0) {
                                                 Box(
                                                     modifier = Modifier
-                                                        .weight(mf.cashPercent.toFloat())
+                                                        .weight((mf.cashPercent ?: 0.0).toFloat())
                                                         .fillMaxHeight()
                                                         .background(Color(0xFFFBBF24))
                                                 )
@@ -1415,7 +1420,7 @@ fun SipWealthCalculator(
         }
 
         // Top funds for this SIP — ranked by a real, measurable metric (3Y CAGR), not a vague "top rated" label
-        val topFunds = mutualFunds.filter { it.return3Yr > 0 }.sortedByDescending { it.return3Yr }.take(3)
+        val topFunds = mutualFunds.filter { (it.return3Yr ?: 0.0) > 0 }.sortedByDescending { it.return3Yr }.take(3)
         if (topFunds.isNotEmpty()) {
             Column {
                 Text(
@@ -1450,12 +1455,12 @@ fun SipWealthCalculator(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(fund.name, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                                 Spacer(modifier = Modifier.height(2.dp))
-                                Text("${fund.category} · Exp: ${fund.expenseRatio}%", color = AxeTextMuted, fontSize = 10.sp)
+                                Text("${fund.category} · Exp: ${fundPercent(fund.expenseRatio)}", color = AxeTextMuted, fontSize = 10.sp)
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = "${if (fund.return3Yr >= 0) "+" else ""}${"%,.1f".format(fund.return3Yr)}% 3Y",
-                                    color = if (fund.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                                    text = "${fundPercent(fund.return3Yr)} 3Y",
+                                    color = if ((fund.return3Yr ?: 0.0) >= 0) AxeEmeraldGreen else AxeRoseRed,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )

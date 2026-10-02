@@ -111,12 +111,14 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
     val watchlistedSymbols by viewModel.watchlistedSymbols.collectAsState()
     val selectedTimeframe by viewModel.selectedTimeframe.collectAsState()
     val mutualFunds by viewModel.mutualFunds.collectAsState()
+    val mutualFundsLoading by viewModel.mutualFundsLoading.collectAsState()
     val portfolioConcentration by viewModel.portfolioConcentration.collectAsState()
 
     // Allotment
     val savedPans by viewModel.savedPans.collectAsState()
     val allotmentRecords by viewModel.allotmentRecords.collectAsState()
     val allotBusy by viewModel.allotBusy.collectAsState()
+    val allotProgress by viewModel.allotProgress.collectAsState()
     val allotAlertsEnabled by viewModel.allotAlertsEnabled.collectAsState()
     val allotmentSectionTick by viewModel.allotmentSectionTick.collectAsState()
     val tradeScanRunning by viewModel.tradeScanRunning.collectAsState()
@@ -232,6 +234,7 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     stocks = stocks,
                     watchlist = watchlist,
                     mutualFunds = mutualFunds,
+                    mutualFundsLoading = mutualFundsLoading,
                     concentration = portfolioConcentration,
                     onAddHoldingClick = { showAddHoldingDialog = true },
                     onAddDirectHolding = { sym, name, qty, price, sec ->
@@ -261,8 +264,15 @@ fun AxewatchApp(viewModel: AxewatchViewModel) {
                     registrarLinks = registrarLinks,
                     regDir = regDir,
                     checkBusy = allotBusy,
+                    checkProgress = allotProgress,
                     onCheckAllotment = { pan, sym, holder ->
                         viewModel.checkAllotment(pan, sym, holder)
+                    },
+                    onCheckSelectedAllotment = { pan, issue, holder ->
+                        viewModel.checkAllotment(pan, issue.symbol, holder, issue.companyName)
+                    },
+                    onCheckSelectedBulk = { issue ->
+                        viewModel.checkBulkAllotment(issue.symbol, issue.companyName)
                     },
                     onCheckBulkAllotment = { ipoSymbol ->
                         viewModel.checkBulkAllotment(ipoSymbol)

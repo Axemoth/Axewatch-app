@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -79,6 +80,8 @@ import com.aistudio.axewatch.trader.data.local.entity.AllotmentRecordEntity
 import com.aistudio.axewatch.trader.data.local.entity.PanVaultEntity
 import com.aistudio.axewatch.trader.data.model.ALLOT_PICKER_TITLES
 import com.aistudio.axewatch.trader.data.model.IpoIssue
+import com.aistudio.axewatch.trader.data.model.resolveAllotmentIssue
+import com.aistudio.axewatch.trader.data.model.allotmentIssueKey
 import com.aistudio.axewatch.trader.data.model.allotPickerSection
 import com.aistudio.axewatch.trader.data.model.ipoRecencyKey
 import com.aistudio.axewatch.trader.data.model.ipoSection
@@ -122,9 +125,12 @@ fun AllotmentScreen(
     regDir: Map<String, DirectoryEntry> = emptyMap(),
     onCheckAllotment: (pan: String, ipoSymbol: String, holderName: String) -> Unit,
     onCheckBulkAllotment: (ipoSymbol: String) -> Unit = {},
+    onCheckSelectedAllotment: (String, IpoIssue, String) -> Unit = { pan, issue, holder -> onCheckAllotment(pan, issue.symbol, holder) },
+    onCheckSelectedBulk: (IpoIssue) -> Unit = { onCheckBulkAllotment(it.symbol) },
     onRetryRecord: (AllotmentRecordEntity) -> Unit = {},
     onRefreshDetails: (AllotmentRecordEntity, String) -> Unit = { _, _ -> },
     checkBusy: Boolean = false,
+    checkProgress: String = "",
     onRecordManualAllotment: (maskedPan: String, ipoSymbol: String, status: String, shares: Int, appNo: String, applied: Int?) -> Unit = { _, _, _, _, _, _ -> },
     onSavePan: (pan: String, name: String, rel: String) -> Unit,
     onDeletePan: (PanVaultEntity) -> Unit,
@@ -139,6 +145,7 @@ fun AllotmentScreen(
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
+    var selectedIpoName by rememberSaveable { mutableStateOf("") }
     var selectedIpoSymbol by rememberSaveable { mutableStateOf(initialSelectedSymbol) }
     // Smart default: most recent results-declared issue first, then most
     // recent closed, then whatever leads the feed. Re-evaluates as the
@@ -147,11 +154,14 @@ fun AllotmentScreen(
     LaunchedEffect(ipos, initialSelectedSymbol) {
         if (initialSelectedSymbol.isNotBlank() && ipos.any { it.symbol == initialSelectedSymbol }) {
             selectedIpoSymbol = initialSelectedSymbol
+            selectedIpoName = ipos.firstOrNull { it.symbol == initialSelectedSymbol }?.companyName.orEmpty()
             onInitialSelectionHandled()
-        } else if (selectedIpoSymbol.isBlank() || ipos.none { it.symbol == selectedIpoSymbol }) {
-            selectedIpoSymbol = ipos
+        } else if (selectedIpoSymbol.isBlank() || resolveAllotmentIssue(ipos, selectedIpoSymbol, selectedIpoName) == null) {
+            val initialIssue = ipos
                 .sortedWith(compareBy({ allotPickerSection(it) }, { -ipoRecencyKey(it) }))
-                .firstOrNull()?.symbol ?: ""
+                .firstOrNull()
+            selectedIpoSymbol = initialIssue?.symbol.orEmpty()
+            selectedIpoName = initialIssue?.companyName.orEmpty()
         }
     }
     var refreshRecord by remember { mutableStateOf<AllotmentRecordEntity?>(null) }
@@ -159,6 +169,8 @@ fun AllotmentScreen(
     var panInput by remember { mutableStateOf("") }
     var panVisible by remember { mutableStateOf(false) }
     var holderInput by remember { mutableStateOf("") }
+    var showPortals by rememberSaveable { mutableStateOf(false) }
+    var showTools by rememberSaveable { mutableStateOf(false) }
     var showAddPanForm by remember { mutableStateOf(false) }
     var showIpoPickerModal by remember { mutableStateOf(false) }
     var showManualRecordDialog by remember { mutableStateOf(false) }
@@ -169,7 +181,7 @@ fun AllotmentScreen(
     var recordFilterTab by rememberSaveable { mutableStateOf(0) }
     var ipoSearchQuery by rememberSaveable { mutableStateOf("") }
 
-    val currentIpo = ipos.find { it.symbol == selectedIpoSymbol } ?: ipos.firstOrNull()
+    val currentIpo = resolveAllotmentIssue(ipos, selectedIpoSymbol, selectedIpoName) ?: ipos.firstOrNull()
 
     val filteredRecords = remember(records, recordFilterTab) {
         when (recordFilterTab) {
@@ -189,13 +201,13 @@ fun AllotmentScreen(
     val decidedSymbols = remember(records) {
         records
             .filter { it.status == "ALLOTTED" || it.status == "NOT_ALLOTTED" || it.status == "NOT_APPLIED" }
-            .map { it.ipoSymbol }
+            .map { allotmentIssueKey(it.ipoSymbol, it.ipoName) }
             .toSet()
     }
     val regCounts = remember(ipos) { registrarCounts(ipos) }
     val featuredAllotmentIpos = remember(ipos, regDir, todayKey, decidedSymbols) {
         ipos.filter { issue ->
-            issue.symbol in decidedSymbols || issue.isAllotmentOut(todayKey, regDir) ||
+            allotmentIssueKey(issue.symbol, issue.companyName) in decidedSymbols || issue.isAllotmentOut(todayKey, regDir) ||
                 issue.isAllotmentDayOrAfter(todayKey, regDir)
         }.sortedWith(compareByDescending { ipoRecencyKey(it) })
     }
@@ -218,24 +230,9 @@ fun AllotmentScreen(
                     .padding(16.dp)
             ) {
                 Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "CHECK IPO ALLOTMENT",
-                            color = AxeTextSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Lock, contentDescription = null, tint = AxeTextMuted, modifier = Modifier.size(12.dp))
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text("PAN hidden on screen", color = AxeTextMuted, fontSize = 10.sp)
-                        }
-                    }
+                    Text("Check allotment", color = AxeTextPrimary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("PAN stays masked on screen", color = AxeTextMuted, fontSize = 11.sp)
 
                     Spacer(modifier = Modifier.height(12.dp))
 
@@ -248,7 +245,7 @@ fun AllotmentScreen(
                             .clip(RoundedCornerShape(8.dp))
                             .background(AxeDarkSurfaceElevated)
                             .border(1.dp, AxeBorder, RoundedCornerShape(8.dp))
-                            .clickable(enabled = currentIpo != null) { showIpoPickerModal = true }
+                            .clickable(enabled = currentIpo != null && !checkBusy) { showIpoPickerModal = true }
                             .padding(horizontal = 12.dp, vertical = 10.dp)
                     ) {
                         Row(
@@ -292,21 +289,7 @@ fun AllotmentScreen(
 
                     // PAN Vault Quick Selector with LazyRow (Fixes phone layout overflow)
                     if (savedPans.isNotEmpty()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text("Pick from PAN Vault (${savedPans.size}):", color = AxeTextSecondary, fontSize = 11.sp)
-                            if (currentIpo != null) {
-                                Text(
-                                    text = "Tap a holder to fill PAN",
-                                    color = AxeTextMuted,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
+                        Text("Choose an applicant (${savedPans.size} saved)", color = AxeTextSecondary, fontSize = 12.sp)
                         Spacer(modifier = Modifier.height(6.dp))
 
                         LazyRow(
@@ -320,7 +303,7 @@ fun AllotmentScreen(
                                         .clip(RoundedCornerShape(8.dp))
                                         .background(if (isSelected) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
                                         .border(1.dp, if (isSelected) AxePrimaryCyan else AxeBorder, RoundedCornerShape(8.dp))
-                                        .clickable {
+                                        .clickable(enabled = !checkBusy) {
                                             panInput = p.panNumber
                                             holderInput = p.holderName
                                         }
@@ -328,7 +311,7 @@ fun AllotmentScreen(
                                 ) {
                                     Column {
                                         Text(p.maskedPan, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Text("${p.holderName} (${p.relation})", color = AxeTextMuted, fontSize = 10.sp)
+                                        Text("${p.holderName} (${p.relation})", color = AxeTextMuted, fontSize = 10.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
                                     }
                                 }
                             }
@@ -340,8 +323,9 @@ fun AllotmentScreen(
                     // the vault chips above offer 1-tap entry without typing.
                     OutlinedTextField(
                         value = panInput,
-                        onValueChange = { panInput = it.uppercase() },
-                        label = { Text("PAN Number (e.g. ABCDE1234F)", fontSize = 12.sp) },
+                        enabled = !checkBusy,
+                        onValueChange = { panInput = it.trim().uppercase().take(10); holderInput = "" },
+                        label = { Text("PAN number", fontSize = 12.sp) },
                         singleLine = true,
                         visualTransformation = if (panVisible) VisualTransformation.None else PasswordVisualTransformation(),
                         trailingIcon = {
@@ -374,15 +358,15 @@ fun AllotmentScreen(
                     Button(
                         onClick = {
                             if (panInput.isNotBlank() && currentIpo != null) {
-                                onCheckAllotment(panInput, currentIpo.symbol, holderInput.ifBlank { "Applicant" })
+                                onCheckSelectedAllotment(panInput, currentIpo, holderInput.ifBlank { "Applicant" })
                             }
                         },
-                        enabled = panInput.isNotBlank() && !checkBusy,
+                        enabled = IpoAllotmentService.isValidPan(panInput) && currentIpo != null && !checkBusy,
                         colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryBlue),
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(46.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("check_allotment_button")
                     ) {
                         if (checkBusy) {
@@ -392,7 +376,7 @@ fun AllotmentScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Checking Registrar…", color = OnPrimaryDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text("Checking registrar…", color = OnPrimaryDark, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         } else {
                             Icon(Icons.Default.Search, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
@@ -404,17 +388,18 @@ fun AllotmentScreen(
                     if (savedPans.size > 1 && currentIpo != null) {
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedButton(
-                            onClick = { onCheckBulkAllotment(currentIpo.symbol) },
+                            onClick = { onCheckSelectedBulk(currentIpo) },
+                            enabled = !checkBusy,
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.outlinedButtonColors(contentColor = AxePrimaryCyan),
                             border = androidx.compose.foundation.BorderStroke(1.dp, AxeBorder),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(42.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Default.Refresh, contentDescription = null, tint = AxePrimaryCyan, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Check All ${savedPans.size} Saved Family PANs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Check all ${savedPans.size} PANs", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                     }
@@ -533,9 +518,9 @@ fun AllotmentScreen(
                             horizontalArrangement = Arrangement.Center,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Automated check via ${if (isKfin) "KFintech" else "Maashitla"} · ", color = AxeTextMuted, fontSize = 10.sp)
+                            Text("Via ${if (isKfin) "KFintech" else "Maashitla"} · ", color = AxeTextMuted, fontSize = 10.sp)
                             Text(
-                                text = "Open official portal",
+                                text = "Open portal",
                                 color = AxePrimaryCyan,
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.SemiBold,
@@ -556,597 +541,21 @@ fun AllotmentScreen(
                             }
                             showManualRecordDialog = true
                         },
-                        modifier = Modifier.align(Alignment.CenterHorizontally)
+                        modifier = Modifier.align(Alignment.CenterHorizontally),
+                        enabled = !checkBusy
                     ) {
                         Icon(Icons.Default.Edit, contentDescription = null, tint = AxeTextSecondary, modifier = Modifier.size(14.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Manually Record Allotment Status / Notes", color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("Record a manual result", color = AxeTextSecondary, fontSize = 11.sp)
                     }
                 }
             }
         }
 
-        // Registrar Health Strip (from upstream)
-        if (healthList.isNotEmpty()) {
-            item {
-                RegistrarHealthStrip(healthList = healthList)
-            }
+        if (checkBusy) item {
+            Text(checkProgress.ifBlank { "Checking registrar…" }, color = AxePrimaryCyan, fontSize = 12.sp,
+                modifier = Modifier.fillMaxWidth().padding(8.dp).testTag("allotment_progress"))
         }
-
-        // Result alerts: background declaration watcher. Checks every saved
-        // family PAN the moment results are declared (MUFG/KFin auto, manual
-        // registrars nudge once) and notifies — no constant API polling.
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(AxeDarkSurface)
-                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        "RESULT ALERTS",
-                        color = AxeTextSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                    Text(
-                        text = if (alertsEnabled) "On — checks after refresh and about hourly in background"
-                        else "Off — enable for background result checks",
-                        color = AxeTextMuted,
-                        fontSize = 10.sp
-                    )
-                }
-                Switch(
-                    checked = alertsEnabled,
-                    onCheckedChange = onToggleAlerts,
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = AxePrimaryCyan,
-                        checkedTrackColor = AxePrimaryCyan.copy(alpha = 0.3f)
-                    )
-                )
-            }
-        }
-
-        // Registrar directory strip: per-registrar issue counts from the live
-        // list (mirrors the web dashboard). Pure count display, no checks.
-        if (regCounts.isNotEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(AxeDarkSurface)
-                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
-                        .padding(10.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            "REGISTRARS",
-                            color = AxeTextMuted,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            "${ipos.size} issues mapped",
-                            color = AxeTextMuted,
-                            fontSize = 10.sp
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(6.dp))
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(regCounts, key = { it.first }) { (code, n) ->
-                            val isBigshare = code.equals("bigshare", ignoreCase = true)
-                            Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(AxeDarkSurfaceElevated)
-                                    .border(
-                                        1.dp,
-                                        if (isBigshare) AxeAmber.copy(alpha = 0.3f) else AxeBorder,
-                                        RoundedCornerShape(6.dp)
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    code.uppercase(),
-                                    color = if (isBigshare) AxeAmber else AxePrimaryCyan,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("$n", color = AxeTextMuted, fontSize = 10.sp)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // -------------------------------------------------------------
-        // FEATURED MAIN-SCREEN SECTION: ALLOTMENT RESULTS OUT / TODAY
-        // Surfaced directly on screen (no dropdown menu burying!)
-        // -------------------------------------------------------------
-        if (featuredAllotmentIpos.isNotEmpty()) {
-            item {
-                Column(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "ALLOTMENT DUE / RESULTS (${featuredAllotmentIpos.size})",
-                            color = AxeEmeraldGreen,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Text(
-                            text = "Auto-detected · Verified",
-                            color = AxeTextMuted,
-                            fontSize = 10.sp
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        items(featuredAllotmentIpos, key = { "feat_${it.symbol}" }) { ipo ->
-                            val badge = ipo.getAllotmentBadge(todayKey, regDir).let {
-                                if (ipo.symbol in decidedSymbols) it.copy(label = "Result on file", isGreenCheck = true)
-                                else it
-                            }
-                            val isSelected = ipo.symbol == selectedIpoSymbol
-                            val isBigshare = ipo.registrar.contains("bigshare", ignoreCase = true)
-
-                            Box(
-                                modifier = Modifier
-                                    .width(280.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(AxeDarkSurface)
-                                    .border(
-                                        1.dp,
-                                        if (isSelected) AxePrimaryCyan else if (badge.isGreenCheck) AxeEmeraldGreen.copy(alpha = 0.5f) else AxeBorder,
-                                        RoundedCornerShape(12.dp)
-                                    )
-                                    .clickable {
-                                        selectedIpoSymbol = ipo.symbol
-                                    }
-                                    .padding(12.dp)
-                            ) {
-                                Column {
-                                    // Top row: Title + Verified Badge
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = ipo.companyName,
-                                            color = AxeTextPrimary,
-                                            fontSize = 13.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(
-                                                    if (badge.isGreenCheck) AxeGreenSubtle
-                                                    else if (badge.isAmber) AxeAmber.copy(alpha = 0.18f)
-                                                    else AxeDarkSurfaceElevated
-                                                )
-                                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = badge.label,
-                                                color = if (badge.isGreenCheck) AxeEmeraldGreen else if (badge.isAmber) AxeAmber else AxePrimaryCyan,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(6.dp))
-
-                                    // Chips row: Category & Registrar
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(AxeDarkSurfaceElevated)
-                                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(ipo.category, color = AxeTextSecondary, fontSize = 9.sp)
-                                        }
-                                        Box(
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .background(if (isBigshare) AxeAmber.copy(alpha = 0.15f) else AxeDarkSurfaceElevated)
-                                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                                        ) {
-                                            Text(
-                                                text = if (isBigshare) "Bigshare" else ipo.registrar,
-                                                color = if (isBigshare) AxeAmber else AxePrimaryCyan,
-                                                fontSize = 9.sp,
-                                                fontWeight = FontWeight.SemiBold
-                                            )
-                                        }
-                                        if (ipo.allotmentDate.isNotBlank()) {
-                                            Text(
-                                                text = "BoA: ${ipo.allotmentDate}",
-                                                color = AxeTextMuted,
-                                                fontSize = 10.sp
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(8.dp))
-
-                                    // Metrics row: Price, Lot, GMP
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text("PRICE", color = AxeTextMuted, fontSize = 9.sp)
-                                            Text(
-                                                text = if (ipo.issuePrice > 0) "₹${ipo.issuePrice.toInt()}" else "—",
-                                                color = AxeTextPrimary,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                        if (ipo.lotSize > 0) {
-                                            Column {
-                                                Text("LOT SIZE", color = AxeTextMuted, fontSize = 9.sp)
-                                                Text(
-                                                    text = "${ipo.lotSize} sh",
-                                                    color = AxeTextPrimary,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Text("LIVE GMP", color = AxeTextMuted, fontSize = 9.sp)
-                                            Text(
-                                                text = if (ipo.gmpAmount > 0) "+₹${ipo.gmpAmount.toInt()} (${ipo.gmpPercent}%)" else "—",
-                                                color = if (ipo.gmpAmount > 0) AxeEmeraldGreen else AxeTextSecondary,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-
-                                    Spacer(modifier = Modifier.height(10.dp))
-
-                                    // 1-Tap Action Buttons
-                                    if (isBigshare) {
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            OutlinedButton(
-                                                onClick = {
-                                                    selectedIpoSymbol = ipo.symbol
-                                                    val copyPan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
-                                                    if (copyPan.isNotBlank()) {
-                                                        clipboardManager.setText(AnnotatedString(copyPan))
-                                                    }
-                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ipo.bigshareonline.com/ipo_status.html"))
-                                                    context.startActivity(intent)
-                                                },
-                                                shape = RoundedCornerShape(6.dp),
-                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
-                                                border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                                    contentDescription = null,
-                                                    tint = AxeAmber,
-                                                    modifier = Modifier.size(11.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(3.dp))
-                                                Text("Open Bigshare", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-                                            }
-
-                                            Button(
-                                                onClick = {
-                                                    selectedIpoSymbol = ipo.symbol
-                                                    manualRecordIpoSymbol = ipo.symbol
-                                                    manualRecordPan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
-                                                    showManualRecordDialog = true
-                                                },
-                                                shape = RoundedCornerShape(6.dp),
-                                                colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
-                                                modifier = Modifier.weight(1f).height(34.dp),
-                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(11.dp))
-                                                Spacer(modifier = Modifier.width(3.dp))
-                                                Text("Record", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    } else {
-                                        // Automated check (Link Intime or KFintech)
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                        ) {
-                                            if (savedPans.size > 1) {
-                                                Button(
-                                                    onClick = {
-                                                        selectedIpoSymbol = ipo.symbol
-                                                        onCheckBulkAllotment(ipo.symbol)
-                                                    },
-                                                    enabled = !checkBusy,
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    colors = ButtonDefaults.buttonColors(containerColor = AxeEmeraldGreen),
-                                                    modifier = Modifier.weight(1f).height(34.dp),
-                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Icon(Icons.Default.Refresh, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Check All PANs", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                            } else {
-                                                Button(
-                                                    onClick = {
-                                                        selectedIpoSymbol = ipo.symbol
-                                                        val pan = panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
-                                                        if (pan.isNotBlank()) {
-                                                            onCheckAllotment(pan, ipo.symbol, holderInput.ifBlank { "Applicant" })
-                                                        }
-                                                    },
-                                                    enabled = !checkBusy,
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
-                                                    modifier = Modifier.weight(1f).height(34.dp),
-                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
-                                                ) {
-                                                    Icon(Icons.Default.Search, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
-                                                    Spacer(modifier = Modifier.width(4.dp))
-                                                    Text("Check Status", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // PAN Vault Management
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(AxeDarkSurface)
-                    .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
-                    .padding(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column {
-                        Text("PAN VAULT (FAMILY ACCOUNTS)", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                        Text("Stored on-device only · never uploaded", color = AxeTextMuted, fontSize = 9.sp)
-                    }
-                    IconButton(
-                        onClick = { showAddPanForm = !showAddPanForm },
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = "Add PAN", tint = AxePrimaryCyan, modifier = Modifier.size(20.dp))
-                    }
-                }
-
-                if (showAddPanForm) {
-                    Spacer(modifier = Modifier.height(10.dp))
-                    var newPan by remember { mutableStateOf("") }
-                    var newPanVisible by remember { mutableStateOf(false) }
-                    var newName by remember { mutableStateOf("") }
-                    var newRel by remember { mutableStateOf("Self") }
-
-                    OutlinedTextField(
-                        value = newPan,
-                        onValueChange = { newPan = it.uppercase() },
-                        label = { Text("PAN Number (10 alphanumeric)", fontSize = 11.sp) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        visualTransformation = if (newPanVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                        trailingIcon = {
-                            IconButton(onClick = { newPanVisible = !newPanVisible }) {
-                                Icon(
-                                    if (newPanVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (newPanVisible) "Hide PAN" else "Show PAN",
-                                    tint = AxeTextMuted,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        },
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = AxeDarkSurfaceElevated,
-                            unfocusedContainerColor = AxeDarkSurfaceElevated,
-                            focusedBorderColor = AxePrimaryCyan,
-                            unfocusedBorderColor = AxeBorder,
-                            focusedTextColor = AxeTextPrimary,
-                            unfocusedTextColor = AxeTextPrimary
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it },
-                        label = { Text("Holder Name (e.g. Rahul Sharma)", fontSize = 11.sp) },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = AxeDarkSurfaceElevated,
-                            unfocusedContainerColor = AxeDarkSurfaceElevated,
-                            focusedBorderColor = AxePrimaryCyan,
-                            unfocusedBorderColor = AxeBorder,
-                            focusedTextColor = AxeTextPrimary,
-                            unfocusedTextColor = AxeTextPrimary
-                        )
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    // Relation selection
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        listOf("Self", "Spouse", "Parent", "Child").forEach { rel ->
-                            val isSel = newRel == rel
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
-                                    .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(6.dp))
-                                    .clickable { newRel = rel }
-                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                            ) {
-                                Text(rel, color = if (isSel) AxePrimaryCyan else AxeTextSecondary, fontSize = 11.sp)
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Button(
-                        onClick = {
-                            if (newPan.isNotBlank() && newName.isNotBlank()) {
-                                onSavePan(newPan, newName, newRel)
-                                showAddPanForm = false
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier.fillMaxWidth().height(42.dp)
-                    ) {
-                        Text("Save PAN to Vault", color = OnPrimaryDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                if (savedPans.isEmpty()) {
-                    Text("No saved PANs yet. Tap '+' above to store family PANs for 1-tap bulk checking.", color = AxeTextMuted, fontSize = 11.sp)
-                } else {
-                    savedPans.forEach { pan ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(pan.maskedPan, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                                Text("${pan.holderName} · Relation: ${pan.relation}", color = AxeTextMuted, fontSize = 10.sp)
-                            }
-                            IconButton(
-                                onClick = { onDeletePan(pan) },
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = AxeTextMuted, modifier = Modifier.size(18.dp))
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Direct Official Registrar Verification Links (BSE, NSE, Link Intime, KFintech, Bigshare)
-        if (registrarLinks.isNotEmpty()) {
-            item {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(AxeDarkSurface)
-                        .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
-                        .padding(14.dp)
-                ) {
-                    Text(
-                        text = "DIRECT REGISTRAR & EXCHANGE PORTALS",
-                        color = AxeTextSecondary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    registrarLinks.forEach { link ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 6.dp)
-                                .clickable {
-                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link.url))
-                                    context.startActivity(intent)
-                                },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(link.title, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                Text(link.subtitle, color = AxeTextMuted, fontSize = 10.sp)
-                            }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
-                                        .background(AxeDarkSurfaceElevated)
-                                        .padding(horizontal = 6.dp, vertical = 2.dp)
-                                ) {
-                                    Text(link.badge, color = AxePrimaryCyan, fontSize = 9.sp)
-                                }
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
-                                    contentDescription = "Open Link",
-                                    tint = AxeTextMuted,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Recent Allotment Check Records Header & Clear Action
         item {
             Column {
@@ -1338,7 +747,7 @@ fun AllotmentScreen(
                                         shape = RoundedCornerShape(6.dp),
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
                                         border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
-                                        modifier = Modifier.height(32.dp),
+                                        modifier = Modifier.heightIn(min = 48.dp),
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                                     ) {
                                         Icon(
@@ -1360,7 +769,7 @@ fun AllotmentScreen(
                                     },
                                     shape = RoundedCornerShape(6.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
-                                    modifier = Modifier.height(32.dp),
+                                    modifier = Modifier.heightIn(min = 48.dp),
                                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                                 ) {
                                     Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(12.dp))
@@ -1372,6 +781,602 @@ fun AllotmentScreen(
                     }
                 }
             }
+        }
+        item {
+            OutlinedButton(onClick = { showTools = !showTools }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text(if (showTools) "Hide PAN vault, alerts & registrar tools" else "PAN vault, alerts & registrar tools", color = AxePrimaryCyan)
+            }
+        }
+        if (showTools) {
+        // Registrar Health Strip (from upstream)
+        if (healthList.isNotEmpty()) {
+            item {
+                RegistrarHealthStrip(healthList = healthList)
+            }
+        }
+
+        // Result alerts: background declaration watcher. Checks every saved
+        // family PAN the moment results are declared (MUFG/KFin auto, manual
+        // registrars nudge once) and notifies — no constant API polling.
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        "RESULT ALERTS",
+                        color = AxeTextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = if (alertsEnabled) "On — checks after refresh and about hourly in background"
+                        else "Off — enable for background result checks",
+                        color = AxeTextMuted,
+                        fontSize = 10.sp
+                    )
+                }
+                Switch(
+                    checked = alertsEnabled,
+                    onCheckedChange = onToggleAlerts,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = AxePrimaryCyan,
+                        checkedTrackColor = AxePrimaryCyan.copy(alpha = 0.3f)
+                    )
+                )
+            }
+        }
+
+        // Registrar directory strip: per-registrar issue counts from the live
+        // list (mirrors the web dashboard). Pure count display, no checks.
+        if (regCounts.isNotEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(AxeDarkSurface)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(10.dp))
+                        .padding(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "REGISTRARS",
+                            color = AxeTextMuted,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            "${ipos.size} issues mapped",
+                            color = AxeTextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(regCounts, key = { it.first }) { (code, n) ->
+                            val isBigshare = code.equals("bigshare", ignoreCase = true)
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(AxeDarkSurfaceElevated)
+                                    .border(
+                                        1.dp,
+                                        if (isBigshare) AxeAmber.copy(alpha = 0.3f) else AxeBorder,
+                                        RoundedCornerShape(6.dp)
+                                    )
+                                    .padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    code.uppercase(),
+                                    color = if (isBigshare) AxeAmber else AxePrimaryCyan,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("$n", color = AxeTextMuted, fontSize = 10.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // FEATURED MAIN-SCREEN SECTION: ALLOTMENT RESULTS OUT / TODAY
+        // Surfaced directly on screen (no dropdown menu burying!)
+        // -------------------------------------------------------------
+        if (featuredAllotmentIpos.isNotEmpty()) {
+            item {
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "ALLOTMENT DUE / RESULTS (${featuredAllotmentIpos.size})",
+                            color = AxeEmeraldGreen,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Scheduled dates are estimates",
+                            color = AxeTextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        items(featuredAllotmentIpos, key = { "feat_${it.symbol}_${it.companyName}" }) { ipo ->
+                            val badge = ipo.getAllotmentBadge(todayKey, regDir).let {
+                                if (allotmentIssueKey(ipo.symbol, ipo.companyName) in decidedSymbols) it.copy(label = "Result on file", isGreenCheck = true)
+                                else it
+                            }
+                            val isSelected = ipo.symbol == selectedIpoSymbol
+                            val isBigshare = ipo.registrar.contains("bigshare", ignoreCase = true)
+
+                            Box(
+                                modifier = Modifier
+                                    .width(280.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(AxeDarkSurface)
+                                    .border(
+                                        1.dp,
+                                        if (isSelected) AxePrimaryCyan else if (badge.isGreenCheck) AxeEmeraldGreen.copy(alpha = 0.5f) else AxeBorder,
+                                        RoundedCornerShape(12.dp)
+                                    )
+                                    .clickable {
+                                        selectedIpoSymbol = ipo.symbol
+                                        selectedIpoName = ipo.companyName
+                                    }
+                                    .padding(12.dp)
+                            ) {
+                                Column {
+                                    // Top row: Title + Verified Badge
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = ipo.companyName,
+                                            color = AxeTextPrimary,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(
+                                                    if (badge.isGreenCheck) AxeGreenSubtle
+                                                    else if (badge.isAmber) AxeAmber.copy(alpha = 0.18f)
+                                                    else AxeDarkSurfaceElevated
+                                                )
+                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = badge.label,
+                                                color = if (badge.isGreenCheck) AxeEmeraldGreen else if (badge.isAmber) AxeAmber else AxePrimaryCyan,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(6.dp))
+
+                                    // Chips row: Category & Registrar
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(AxeDarkSurfaceElevated)
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(ipo.category, color = AxeTextSecondary, fontSize = 9.sp)
+                                        }
+                                        Box(
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .background(if (isBigshare) AxeAmber.copy(alpha = 0.15f) else AxeDarkSurfaceElevated)
+                                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = if (isBigshare) "Bigshare" else ipo.registrar,
+                                                color = if (isBigshare) AxeAmber else AxePrimaryCyan,
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.SemiBold
+                                            )
+                                        }
+                                        if (ipo.allotmentDate.isNotBlank()) {
+                                            Text(
+                                                text = "BoA: ${ipo.allotmentDate}",
+                                                color = AxeTextMuted,
+                                                fontSize = 10.sp
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    // Metrics row: Price, Lot, GMP
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column {
+                                            Text("PRICE", color = AxeTextMuted, fontSize = 9.sp)
+                                            Text(
+                                                text = if (ipo.issuePrice > 0) "₹${ipo.issuePrice.toInt()}" else "—",
+                                                color = AxeTextPrimary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        if (ipo.lotSize > 0) {
+                                            Column {
+                                                Text("LOT SIZE", color = AxeTextMuted, fontSize = 9.sp)
+                                                Text(
+                                                    text = "${ipo.lotSize} sh",
+                                                    color = AxeTextPrimary,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                        Column(horizontalAlignment = Alignment.End) {
+                                            Text("LIVE GMP", color = AxeTextMuted, fontSize = 9.sp)
+                                            Text(
+                                                text = if (ipo.gmpAmount > 0) "+₹${ipo.gmpAmount.toInt()} (${ipo.gmpPercent}%)" else "—",
+                                                color = if (ipo.gmpAmount > 0) AxeEmeraldGreen else AxeTextSecondary,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+
+                                    Spacer(modifier = Modifier.height(10.dp))
+
+                                    // 1-Tap Action Buttons
+                                    if (isBigshare) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    selectedIpoSymbol = ipo.symbol
+                                                    selectedIpoName = ipo.companyName
+                                                    val copyPan = panInput
+                                                    if (copyPan.isNotBlank()) {
+                                                        clipboardManager.setText(AnnotatedString(copyPan))
+                                                    }
+                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://ipo.bigshareonline.com/ipo_status.html"))
+                                                    context.startActivity(intent)
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.outlinedButtonColors(contentColor = AxeAmber),
+                                                border = androidx.compose.foundation.BorderStroke(1.dp, AxeAmber.copy(alpha = 0.5f)),
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                                    contentDescription = null,
+                                                    tint = AxeAmber,
+                                                    modifier = Modifier.size(11.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text("Open Bigshare", fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                                            }
+
+                                            Button(
+                                                onClick = {
+                                                    selectedIpoSymbol = ipo.symbol
+                                                    selectedIpoName = ipo.companyName
+                                                    manualRecordIpoSymbol = ipo.symbol
+                                                    manualRecordPan = panInput
+                                                    showManualRecordDialog = true
+                                                },
+                                                shape = RoundedCornerShape(6.dp),
+                                                colors = ButtonDefaults.buttonColors(containerColor = AxeAmber),
+                                                modifier = Modifier.weight(1f).height(34.dp),
+                                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(11.dp))
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text("Record", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    } else {
+                                        // Automated check (Link Intime or KFintech)
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
+                                            if (savedPans.size > 1) {
+                                                Button(
+                                                    onClick = {
+                                                        selectedIpoSymbol = ipo.symbol
+                                                        selectedIpoName = ipo.companyName
+                                                        onCheckSelectedBulk(ipo)
+                                                    },
+                                                    enabled = !checkBusy,
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = AxeEmeraldGreen),
+                                                    modifier = Modifier.weight(1f).height(34.dp),
+                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Refresh, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Check All PANs", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            } else {
+                                                Button(
+                                                    onClick = {
+                                                        selectedIpoSymbol = ipo.symbol
+                                                        selectedIpoName = ipo.companyName
+                                                        val pan = panInput
+                                                        if (pan.isNotBlank()) {
+                                                            onCheckSelectedAllotment(pan, ipo, holderInput.ifBlank { "Applicant" })
+                                                        }
+                                                    },
+                                                    enabled = !checkBusy,
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
+                                                    modifier = Modifier.weight(1f).height(34.dp),
+                                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 2.dp)
+                                                ) {
+                                                    Icon(Icons.Default.Search, contentDescription = null, tint = OnPrimaryDark, modifier = Modifier.size(12.dp))
+                                                    Spacer(modifier = Modifier.width(4.dp))
+                                                    Text("Check Status", color = OnPrimaryDark, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // PAN Vault Management
+        item {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(AxeDarkSurface)
+                    .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+                    .padding(14.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("PAN VAULT (FAMILY ACCOUNTS)", color = AxeTextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                        Text("Saved locally · sent to the registrar when checking", color = AxeTextMuted, fontSize = 9.sp)
+                    }
+                    IconButton(
+                        onClick = { showAddPanForm = !showAddPanForm },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = "Add PAN", tint = AxePrimaryCyan, modifier = Modifier.size(20.dp))
+                    }
+                }
+
+                if (showAddPanForm) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    var newPan by remember { mutableStateOf("") }
+                    var newPanVisible by remember { mutableStateOf(false) }
+                    var newName by remember { mutableStateOf("") }
+                    var newRel by remember { mutableStateOf("Self") }
+
+                    OutlinedTextField(
+                        value = newPan,
+                        onValueChange = { newPan = it.uppercase() },
+                        label = { Text("PAN Number (10 alphanumeric)", fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = if (newPanVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingIcon = {
+                            IconButton(onClick = { newPanVisible = !newPanVisible }) {
+                                Icon(
+                                    if (newPanVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (newPanVisible) "Hide PAN" else "Show PAN",
+                                    tint = AxeTextMuted,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        },
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AxeDarkSurfaceElevated,
+                            unfocusedContainerColor = AxeDarkSurfaceElevated,
+                            focusedBorderColor = AxePrimaryCyan,
+                            unfocusedBorderColor = AxeBorder,
+                            focusedTextColor = AxeTextPrimary,
+                            unfocusedTextColor = AxeTextPrimary
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    OutlinedTextField(
+                        value = newName,
+                        onValueChange = { newName = it },
+                        label = { Text("Holder Name (e.g. Rahul Sharma)", fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = AxeDarkSurfaceElevated,
+                            unfocusedContainerColor = AxeDarkSurfaceElevated,
+                            focusedBorderColor = AxePrimaryCyan,
+                            unfocusedBorderColor = AxeBorder,
+                            focusedTextColor = AxeTextPrimary,
+                            unfocusedTextColor = AxeTextPrimary
+                        )
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    // Relation selection
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf("Self", "Spouse", "Parent", "Child").forEach { rel ->
+                            val isSel = newRel == rel
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(if (isSel) AxePrimaryCyan.copy(alpha = 0.2f) else AxeDarkSurfaceElevated)
+                                    .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(6.dp))
+                                    .clickable { newRel = rel }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text(rel, color = if (isSel) AxePrimaryCyan else AxeTextSecondary, fontSize = 11.sp)
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Button(
+                        onClick = {
+                            if (newPan.isNotBlank() && newName.isNotBlank()) {
+                                onSavePan(newPan, newName, newRel)
+                                showAddPanForm = false
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = AxePrimaryCyan),
+                        shape = RoundedCornerShape(6.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                    ) {
+                        Text("Save PAN to Vault", color = OnPrimaryDark, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                if (savedPans.isEmpty()) {
+                    Text("No saved PANs yet. Tap '+' above to store family PANs for 1-tap bulk checking.", color = AxeTextMuted, fontSize = 11.sp)
+                } else {
+                    savedPans.forEach { pan ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column {
+                                Text(pan.maskedPan, color = AxeTextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Text("${pan.holderName} · Relation: ${pan.relation}", color = AxeTextMuted, fontSize = 10.sp)
+                            }
+                            IconButton(
+                                onClick = { onDeletePan(pan) },
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = AxeTextMuted, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Direct Official Registrar Verification Links (BSE, NSE, Link Intime, KFintech, Bigshare)
+        if (registrarLinks.isNotEmpty()) {
+            item {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(AxeDarkSurface)
+                        .border(1.dp, AxeBorder, RoundedCornerShape(12.dp))
+                        .padding(14.dp)
+                ) {
+                    TextButton(onClick = { showPortals = !showPortals }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                    Text(
+                        text = if (showPortals) "HIDE OFFICIAL PORTALS" else "OFFICIAL REGISTRAR PORTALS (${registrarLinks.size})",
+                        color = AxeTextSecondary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    }
+                    if (showPortals) registrarLinks.forEach { link ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 48.dp)
+                                .padding(vertical = 6.dp)
+                                .clickable {
+                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link.url))
+                                    context.startActivity(intent)
+                                },
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(link.title, color = AxeTextPrimary, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Text(link.subtitle, color = AxeTextMuted, fontSize = 10.sp)
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(AxeDarkSurfaceElevated)
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(link.badge, color = AxePrimaryCyan, fontSize = 9.sp)
+                                }
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = "Open Link",
+                                    tint = AxeTextMuted,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         }
     }
 
@@ -1395,11 +1400,11 @@ fun AllotmentScreen(
             filteredIpos
                 .sortedWith(
                     compareBy(
-                        { allotPickerSection(it, it.symbol in decidedSymbols, todayKey, regDir) },
+                        { allotPickerSection(it, allotmentIssueKey(it.symbol, it.companyName) in decidedSymbols, todayKey, regDir) },
                         { -ipoRecencyKey(it) }
                     )
                 )
-                .groupBy { allotPickerSection(it, it.symbol in decidedSymbols, todayKey, regDir) }
+                .groupBy { allotPickerSection(it, allotmentIssueKey(it.symbol, it.companyName) in decidedSymbols, todayKey, regDir) }
                 .toSortedMap()
                 .mapKeys { (section, _) -> ALLOT_PICKER_TITLES[section] ?: "OTHERS" }
                 .toList()
@@ -1452,8 +1457,8 @@ fun AllotmentScreen(
                                         modifier = Modifier.padding(top = 4.dp)
                                     )
                                 }
-                                items(issues, key = { "ipo_${it.symbol}" }) { ipo ->
-                            val isSel = ipo.symbol == selectedIpoSymbol
+                                items(issues, key = { "ipo_${it.symbol}_${it.companyName}" }) { ipo ->
+                            val isSel = ipo.symbol == selectedIpoSymbol && ipo.companyName == selectedIpoName
                             val rowBadge = ipo.getAllotmentBadge(todayKey, regDir)
                             Box(
                                 modifier = Modifier
@@ -1463,6 +1468,7 @@ fun AllotmentScreen(
                                     .border(1.dp, if (isSel) AxePrimaryCyan else AxeBorder, RoundedCornerShape(8.dp))
                                     .clickable {
                                         selectedIpoSymbol = ipo.symbol
+                                        selectedIpoName = ipo.companyName
                                         showIpoPickerModal = false
                                     }
                                     .padding(10.dp)
@@ -1591,7 +1597,7 @@ fun AllotmentScreen(
                 if (manualRecordPan.isNotBlank() && IpoAllotmentService.isValidPan(manualRecordPan)) {
                     manualRecordPan
                 } else {
-                    panInput.ifBlank { savedPans.firstOrNull()?.panNumber ?: "" }
+                    panInput
                 }
             )
         }

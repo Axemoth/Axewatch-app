@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -68,6 +69,7 @@ fun IndexDetailModal(
     index: MarketIndex,
     constituents: List<IndexConstituent>,
     isLoading: Boolean = false,
+    onRetry: () -> Unit = {},
     onStockClick: (StockQuote) -> Unit,
     onDismiss: () -> Unit,
     // Live quotes by symbol (empty when the feed is down). The static provider
@@ -361,10 +363,15 @@ fun IndexDetailModal(
                             when {
                                 isLoading -> "Loading the complete constituent list…"
                                 index.symbol == "INDIAVIX" -> "India VIX is a volatility index, not a basket of stocks."
-                                constituents.isEmpty() -> "Constituent list unavailable. Reopen to retry."
+                                constituents.isEmpty() -> "Constituent list unavailable. Try again."
                                 else -> "No constituent stocks match '$searchQuery'"
                             }, color = AxeTextMuted, fontSize = 12.sp
                         )
+                        if (!isLoading && constituents.isEmpty() && index.symbol != "INDIAVIX") {
+                            androidx.compose.material3.TextButton(onClick = onRetry, modifier = Modifier.heightIn(min = 48.dp)) {
+                                Text("Retry loading", color = AxePrimaryCyan)
+                            }
+                        }
                         Spacer(modifier = Modifier.height(6.dp))
                         Box(
                             modifier = Modifier

@@ -629,6 +629,7 @@ fun MarketScreen(
             index = idx,
             constituents = indexConstituents[idx.symbol].orEmpty(),
             isLoading = idx.symbol in indexLoading,
+            onRetry = { onLoadIndex(idx.symbol) },
             // Prices come only from live quotes; the static provider has none.
             liveQuotes = stocks.associateBy { it.symbol },
             onStockClick = { stockQuote ->

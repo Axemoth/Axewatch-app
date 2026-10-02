@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.aistudio.axewatch.trader.data.model.MutualFundScheme
+import com.aistudio.axewatch.trader.data.model.fundPercent
 import com.aistudio.axewatch.trader.ui.theme.AxeAmber
 import com.aistudio.axewatch.trader.ui.theme.AxeBorder
 import com.aistudio.axewatch.trader.ui.theme.AxeDarkBg
@@ -188,67 +189,19 @@ fun MutualFundDetailModal(
                         .border(1.dp, AxeBorder, RoundedCornerShape(14.dp))
                         .padding(16.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("Current NAV", color = AxeTextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = "₹${"%,.2f".format(scheme.nav)}",
-                                color = AxeTextPrimary,
-                                fontSize = 26.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            val isPos = scheme.dayChangePercent >= 0
-                            val dayDiff = scheme.nav - scheme.navPrev
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (isPos) "+₹${"%.2f".format(dayDiff)} (+${"%.2f".format(scheme.dayChangePercent)}%)" else "-₹${"%.2f".format(-dayDiff)} (${"%.2f".format(scheme.dayChangePercent)}%)",
-                                    color = if (isPos) AxeEmeraldGreen else AxeRoseRed,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("1D Change", color = AxeTextMuted, fontSize = 10.sp)
-                            }
-                        }
-
-                        Column(horizontalAlignment = Alignment.End) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(
-                                        when {
-                                            scheme.riskLevel.contains("High", ignoreCase = true) -> AxeRedSubtle
-                                            scheme.riskLevel.contains("Low", ignoreCase = true) -> AxeGreenSubtle
-                                            scheme.riskLevel.isBlank() -> AxeDarkSurfaceElevated
-                                            else -> AxeAmber.copy(alpha = 0.14f)
-                                        }
-                                    )
-                                    .padding(horizontal = 8.dp, vertical = 4.dp)
-                            ) {
-                                Text(
-                                    text = if (scheme.riskLevel.isBlank()) "Risk: unknown" else "Risk: ${scheme.riskLevel}",
-                                    color = when {
-                                        scheme.riskLevel.contains("High", ignoreCase = true) -> AxeRoseRed
-                                        scheme.riskLevel.contains("Low", ignoreCase = true) -> AxeEmeraldGreen
-                                        scheme.riskLevel.isBlank() -> AxeTextMuted
-                                        else -> AxeAmber
-                                    },
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(
-                                text = "Code: ${scheme.code}",
-                                color = AxeTextMuted,
-                                fontSize = 11.sp
-                            )
-                        }
+                    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Current NAV", color = AxeTextMuted, fontSize = 11.sp)
+                        Text("₹${"%,.2f".format(scheme.nav)}", color = AxeTextPrimary, fontSize = 26.sp, fontWeight = FontWeight.Bold)
+                        Text(if (scheme.dayChangePercent == null) "Change unavailable" else fundPercent(scheme.dayChangePercent),
+                            color = when {
+                                scheme.dayChangePercent == null -> AxeTextMuted
+                                scheme.dayChangePercent >= 0 -> AxeEmeraldGreen
+                                else -> AxeRoseRed
+                            }, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("NAV ${scheme.navDate}", color = AxeTextMuted, fontSize = 11.sp)
+                        Text(if (scheme.riskLevel.isBlank()) "Risk: unknown" else "Risk: ${scheme.riskLevel}",
+                            color = AxeTextSecondary, fontSize = 11.sp)
+                        Text("Code: ${scheme.code}", color = AxeTextMuted, fontSize = 11.sp)
                     }
                 }
 
@@ -270,14 +223,14 @@ fun MutualFundDetailModal(
                 ) {
                     MetricBox(
                         title = "1Y Return",
-                        value = signedPct(scheme.return1Yr),
-                        valueColor = if (scheme.return1Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                        value = fundPercent(scheme.return1Yr),
+                        valueColor = if ((scheme.return1Yr ?: 0.0) >= 0) AxeEmeraldGreen else AxeRoseRed,
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
                         title = "3Y Return",
-                        value = signedPct(scheme.return3Yr),
-                        valueColor = if (scheme.return3Yr >= 0) AxeEmeraldGreen else AxeRoseRed,
+                        value = fundPercent(scheme.return3Yr),
+                        valueColor = if ((scheme.return3Yr ?: 0.0) >= 0) AxeEmeraldGreen else AxeRoseRed,
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
@@ -296,13 +249,13 @@ fun MutualFundDetailModal(
                 ) {
                     MetricBox(
                         title = "Expense Ratio",
-                        value = "${scheme.expenseRatio}%",
+                        value = fundPercent(scheme.expenseRatio),
                         valueColor = AxeTextPrimary,
                         modifier = Modifier.weight(1f)
                     )
                     MetricBox(
                         title = "Fund AUM",
-                        value = "₹${"%,.0f".format(scheme.aumCr)} Cr",
+                        value = scheme.aumCr?.let { "₹${"%,.0f".format(it)} Cr" } ?: "—",
                         valueColor = AxePrimaryCyan,
                         modifier = Modifier.weight(1f)
                     )
@@ -312,7 +265,7 @@ fun MutualFundDetailModal(
 
                 // Asset Allocation (What your money is actually in)
                 Text(
-                    text = "ASSET ALLOCATION (WHAT YOUR MONEY IS IN)",
+                    text = "ASSET ALLOCATION",
                     color = AxeTextSecondary,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
@@ -329,26 +282,26 @@ fun MutualFundDetailModal(
                         .background(AxeDarkSurfaceElevated)
                 ) {
                     Row(modifier = Modifier.fillMaxWidth()) {
-                        if (scheme.equityPercent > 0) {
+                        if ((scheme.equityPercent ?: 0.0) > 0) {
                             Box(
                                 modifier = Modifier
-                                    .weight(scheme.equityPercent.toFloat())
+                                    .weight((scheme.equityPercent ?: 0.0).toFloat())
                                     .fillMaxHeight()
                                     .background(Color(0xFF38BDF8))
                             )
                         }
-                        if (scheme.debtPercent > 0) {
+                        if ((scheme.debtPercent ?: 0.0) > 0) {
                             Box(
                                 modifier = Modifier
-                                    .weight(scheme.debtPercent.toFloat())
+                                    .weight((scheme.debtPercent ?: 0.0).toFloat())
                                     .fillMaxHeight()
                                     .background(Color(0xFFF87171))
                             )
                         }
-                        if (scheme.cashPercent > 0) {
+                        if ((scheme.cashPercent ?: 0.0) > 0) {
                             Box(
                                 modifier = Modifier
-                                    .weight(scheme.cashPercent.toFloat())
+                                    .weight((scheme.cashPercent ?: 0.0).toFloat())
                                     .fillMaxHeight()
                                     .background(Color(0xFFFBBF24))
                             )
@@ -363,9 +316,9 @@ fun MutualFundDetailModal(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    LegendItem(color = Color(0xFF38BDF8), label = "Equity: ${scheme.equityPercent}%")
-                    LegendItem(color = Color(0xFFF87171), label = "Debt: ${scheme.debtPercent}%")
-                    LegendItem(color = Color(0xFFFBBF24), label = "Cash/FD: ${scheme.cashPercent}%")
+                    LegendItem(color = Color(0xFF38BDF8), label = "Equity: ${fundPercent(scheme.equityPercent)}")
+                    LegendItem(color = Color(0xFFF87171), label = "Debt: ${fundPercent(scheme.debtPercent)}")
+                    LegendItem(color = Color(0xFFFBBF24), label = "Cash: ${fundPercent(scheme.cashPercent)}")
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
@@ -391,6 +344,7 @@ fun MutualFundDetailModal(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(
                             text = when {
+                                scheme.equityPercent == null -> "Allocation, fees, AUM and risk ratings are not supplied by this NAV source. Returns are calculated from published NAV history."
                                 scheme.debtPercent == 0.0 && scheme.cashPercent == 0.0 ->
                                     "Pure equity: the full portfolio is in public market equities."
                                 else ->

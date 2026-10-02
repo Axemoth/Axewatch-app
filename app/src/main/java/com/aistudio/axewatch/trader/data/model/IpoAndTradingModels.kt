@@ -24,8 +24,27 @@ data class IpoIssue(
     // Basis-of-allotment declaration date from the registrar directory
     // (ipomarket/IPOWatch tables), e.g. "18 Sep 2026". Blank = unknown.
     // Drives the "Results declared" section and recent-first ordering.
-    val allotmentDate: String = ""
+    val allotmentDate: String = "",
+    val gmpReported: Boolean = gmpAmount != 0.0 || gmpPercent != 0.0
 )
+
+fun allotmentIssueKey(symbol: String, companyName: String): String =
+    "$symbol|${com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName)}"
+
+/** A generated short symbol is not sufficient to identify a company. */
+fun resolveAllotmentIssue(issues: List<IpoIssue>, symbol: String, companyName: String? = null): IpoIssue? {
+    val candidates = issues.filter { it.symbol == symbol }
+    if (!companyName.isNullOrBlank()) {
+        candidates.firstOrNull { it.companyName.trim().equals(companyName.trim(), true) }?.let { return it }
+        val key = com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(companyName)
+        return candidates.firstOrNull {
+            com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(it.companyName) == key
+        }
+    }
+    return candidates.distinctBy {
+        com.aistudio.axewatch.trader.data.remote.IpoAllotmentService.canonIpoName(it.companyName)
+    }.singleOrNull()
+}
 
 /** Section rank for the allotment picker: declared results first. */
 fun ipoSection(issue: IpoIssue): Int {
@@ -349,7 +368,8 @@ data class GmpItem(
     val status: String, // "Open", "Upcoming", "Closed", "Listed"
     val fireRating: Int, // 1 to 5
     val lastUpdated: String,
-    val category: String = "Unknown"
+    val category: String = "Unknown",
+    val gmpReported: Boolean = gmpAmount != 0.0 || gmpPercent != 0.0
 )
 
 data class CurrentIpoRow(val issue: IpoIssue, val stage: Int)
@@ -403,7 +423,7 @@ fun currentIpoRows(
         if (match != null) used.add(match.index)
         val gmp = match?.value
         val merged = if (gmp == null) issue else issue.copy(
-            gmpAmount = gmp.gmpAmount,
+            gmpAmount = gmp.gmpAmount, gmpReported = gmp.gmpReported,
             gmpPercent = gmp.gmpPercent,
             estListingPrice = gmp.estListingPrice,
             category = issue.category.takeIf { it == "SME" || it == "Mainboard" }
@@ -426,7 +446,7 @@ fun currentIpoRows(
             category = gmp.category, status = gmp.status,
             issueOpenDate = "", issueCloseDate = "", priceBand = if (gmp.issuePrice > 0) "₹${gmp.issuePrice.toInt()}" else "—",
             issuePrice = gmp.issuePrice, lotSize = 0, issueSizeCr = 0.0, registrar = "Unknown",
-            gmpAmount = gmp.gmpAmount, gmpPercent = gmp.gmpPercent,
+            gmpAmount = gmp.gmpAmount, gmpReported = gmp.gmpReported, gmpPercent = gmp.gmpPercent,
             estListingPrice = gmp.estListingPrice
         ), stage))
     }
@@ -554,24 +574,39 @@ data class MutualFundScheme(
     val code: String,
     val name: String,
     val fundHouse: String,
-    val category: String, // "Flexi Cap", "Large Cap", "Small Cap", "Mid Cap", "Index", "Hybrid", "Debt"
+    val category: String,
     val nav: Double,
-    val navPrev: Double,
-    val dayChangePercent: Double,
-    val expenseRatio: Double,
-    val aumCr: Double,
-    val return1Yr: Double,
-    val return3Yr: Double,
-    // Null until derived from real NAV history — renders as "—".
+    val navPrev: Double?,
+    val dayChangePercent: Double?,
+    val expenseRatio: Double? = null,
+    val aumCr: Double? = null,
+    val return1Yr: Double? = null,
+    val return3Yr: Double? = null,
     val return5Yr: Double? = null,
-    val equityPercent: Double,
-    val debtPercent: Double,
-    val cashPercent: Double,
-    val otherPercent: Double = 0.0,
+    val equityPercent: Double? = null,
+    val debtPercent: Double? = null,
+    val cashPercent: Double? = null,
+    val otherPercent: Double? = null,
     val topHoldings: List<String> = emptyList(),
-    val benchmark: String = "NIFTY 500 TRI",
-    val riskLevel: String = "Very High"
+    val benchmark: String = "",
+    val riskLevel: String = "",
+    val navDate: String = ""
 )
+
+fun fundPercent(value: Double?): String = value?.let {
+    "${if (it > 0) "+" else ""}${"%.1f".format(java.util.Locale.ENGLISH, it)}%"
+} ?: "—"
+
+/** Fund units use published NAVs, shares use positive stock quotes. */
+fun portfolioPriceMap(stocks: List<StockQuote>, funds: List<MutualFundScheme>): Map<String, Double> =
+    stocks.filter { it.lastPrice.isFinite() && it.lastPrice > 0 }.associate { it.symbol to it.lastPrice } +
+        funds.filter { it.nav.isFinite() && it.nav > 0 }.associate { it.code to it.nav }
+
+fun normalizedHoldingType(value: String): String = when (value.trim().uppercase()) {
+    "MF", "MUTUAL_FUND", "MUTUAL FUND" -> "MUTUAL_FUND"
+    "STOCK", "EQUITY" -> "STOCK"
+    else -> value
+}
 
 data class RegistrarSourceHealth(
     val id: String,
